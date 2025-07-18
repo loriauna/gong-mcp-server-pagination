@@ -2,19 +2,119 @@
 
 import http from 'http';
 import { URL } from 'url';
+import axios from 'axios';
+import crypto from 'crypto';
+import dotenv from 'dotenv';
+
+dotenv.config();
 
 const PORT = process.env.PORT || 3000;
 const BASE_URL = process.env.RAILWAY_STATIC_URL || `http://localhost:${PORT}`;
 
-console.log(`🚀 Starting MCP OAuth server on port ${PORT}...`);
+console.log(`🚀 Starting Gong MCP OAuth server on port ${PORT}...`);
 console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
 console.log(`Platform: ${process.platform}`);
 console.log(`Node version: ${process.version}`);
 console.log(`Base URL: ${BASE_URL}`);
 
+// Gong API configuration
+const GONG_API_URL = 'https://api.gong.io/v2';
+const GONG_ACCESS_KEY = process.env.GONG_ACCESS_KEY;
+const GONG_ACCESS_SECRET = process.env.GONG_ACCESS_SECRET;
+
 // Simple in-memory storage for OAuth clients and tokens
 const clients = new Map();
 const tokens = new Map();
+
+// Gong API Client
+class GongClient {
+  private accessKey: string;
+  private accessSecret: string;
+
+  constructor(accessKey: string, accessSecret: string) {
+    this.accessKey = accessKey;
+    this.accessSecret = accessSecret;
+  }
+
+  private async generateSignature(method: string, path: string, timestamp: string, params?: unknown): Promise<string> {
+    const stringToSign = `${method}\n${path}\n${timestamp}\n${params ? JSON.stringify(params) : ''}`;
+    const encoder = new TextEncoder();
+    const keyData = encoder.encode(this.accessSecret);
+    const messageData = encoder.encode(stringToSign);
+    
+    const cryptoKey = await crypto.subtle.importKey(
+      'raw',
+      keyData,
+      { name: 'HMAC', hash: 'SHA-256' },
+      false,
+      ['sign']
+    );
+    
+    const signature = await crypto.subtle.sign(
+      'HMAC',
+      cryptoKey,
+      messageData
+    );
+    
+    return btoa(String.fromCharCode(...new Uint8Array(signature)));
+  }
+
+  private async request<T>(method: string, path: string, params?: Record<string, string | number | undefined>, data?: Record<string, unknown>): Promise<T> {
+    const timestamp = new Date().toISOString();
+    const url = `${GONG_API_URL}${path}`;
+    
+    const response = await axios({
+      method,
+      url,
+      params,
+      data,
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Basic ${Buffer.from(`${this.accessKey}:${this.accessSecret}`).toString('base64')}`,
+        'X-Gong-AccessKey': this.accessKey,
+        'X-Gong-Timestamp': timestamp,
+        'X-Gong-Signature': await this.generateSignature(method, path, timestamp, data || params)
+      }
+    });
+
+    return response.data as T;
+  }
+
+  async listCalls(fromDateTime?: string, toDateTime?: string, cursor?: string, limit?: number): Promise<any> {
+    const params: any = {};
+    if (fromDateTime) params.fromDateTime = fromDateTime;
+    if (toDateTime) params.toDateTime = toDateTime;
+    if (cursor) params.cursor = cursor;
+    if (limit) params.limit = limit;
+
+    return this.request<any>('GET', '/calls', params);
+  }
+
+  async retrieveTranscripts(callIds: string[], cursor?: string, limit?: number): Promise<any> {
+    const requestData: any = {
+      filter: {
+        callIds,
+        includeEntities: true,
+        includeInteractionsSummary: true,
+        includeTrackers: true
+      }
+    };
+
+    if (cursor) requestData.cursor = cursor;
+    if (limit) requestData.limit = limit;
+
+    return this.request<any>('POST', '/calls/transcript', undefined, requestData);
+  }
+}
+
+// Initialize Gong client if credentials are available
+let gongClient: GongClient | null = null;
+if (GONG_ACCESS_KEY && GONG_ACCESS_SECRET) {
+  gongClient = new GongClient(GONG_ACCESS_KEY, GONG_ACCESS_SECRET);
+  console.log('✅ Gong client initialized');
+} else {
+  console.log('⚠️  Gong credentials not found, API functionality will be limited');
+}
 
 const server = http.createServer((req: any, res: any) => {
   console.log(`${new Date().toISOString()} - ${req.method} ${req.url}`);
@@ -204,6 +304,140 @@ const server = http.createServer((req: any, res: any) => {
     return;
   }
   
+  // MCP Tools endpoint
+  if (path === '/tools' && req.method === 'GET') {
+    res.writeHead(200);
+    res.end(JSON.stringify({
+      tools: [
+        {
+          name: "list_calls",
+          description: "List Gong calls with optional date range filtering and pagination. Returns call details including ID, title, start/end times, participants, and duration. Supports pagination with cursor and limit parameters.",
+          inputSchema: {
+            type: "object",
+            properties: {
+              fromDateTime: {
+                type: "string",
+                description: "Start date/time in ISO format (e.g. 2024-03-01T00:00:00Z)"
+              },
+              toDateTime: {
+                type: "string",
+                description: "End date/time in ISO format (e.g. 2024-03-31T23:59:59Z)"
+              },
+              cursor: {
+                type: "string",
+                description: "Cursor for pagination. Use the cursor value from the previous response to get the next page of results."
+              },
+              limit: {
+                type: "integer",
+                description: "Maximum number of results to return (default: 100, max: 100)"
+              }
+            }
+          }
+        },
+        {
+          name: "retrieve_transcripts",
+          description: "Retrieve transcripts for specified call IDs with pagination support. Returns detailed transcripts including speaker IDs, topics, and timestamped sentences.",
+          inputSchema: {
+            type: "object",
+            properties: {
+              callIds: {
+                type: "array",
+                items: { type: "string" },
+                description: "Array of Gong call IDs to retrieve transcripts for"
+              },
+              cursor: {
+                type: "string",
+                description: "Cursor for pagination. Use the cursor value from the previous response to get the next page of results."
+              },
+              limit: {
+                type: "integer",
+                description: "Maximum number of results to return (default: 100, max: 100)"
+              }
+            },
+            required: ["callIds"]
+          }
+        }
+      ]
+    }));
+    return;
+  }
+  
+  // MCP Call Tool endpoint
+  if (path === '/call-tool' && req.method === 'POST') {
+    let body = '';
+    req.on('data', (chunk: any) => body += chunk);
+    req.on('end', async () => {
+      try {
+        const { name, arguments: args } = JSON.parse(body);
+        
+        if (!gongClient) {
+          res.writeHead(400);
+          res.end(JSON.stringify({ 
+            error: 'Gong API credentials not configured',
+            content: [{ type: 'text', text: 'Gong API credentials not configured. Please set GONG_ACCESS_KEY and GONG_ACCESS_SECRET environment variables.' }],
+            isError: true
+          }));
+          return;
+        }
+        
+        switch (name) {
+          case 'list_calls': {
+            const { fromDateTime, toDateTime, cursor, limit } = args || {};
+            const response = await gongClient.listCalls(fromDateTime, toDateTime, cursor, limit);
+            res.writeHead(200);
+            res.end(JSON.stringify({
+              content: [{ 
+                type: "text", 
+                text: JSON.stringify(response, null, 2)
+              }],
+              isError: false,
+            }));
+            break;
+          }
+          
+          case 'retrieve_transcripts': {
+            const { callIds, cursor, limit } = args || {};
+            if (!callIds || !Array.isArray(callIds)) {
+              res.writeHead(400);
+              res.end(JSON.stringify({
+                error: 'callIds parameter is required and must be an array',
+                content: [{ type: 'text', text: 'callIds parameter is required and must be an array' }],
+                isError: true
+              }));
+              return;
+            }
+            const response = await gongClient.retrieveTranscripts(callIds, cursor, limit);
+            res.writeHead(200);
+            res.end(JSON.stringify({
+              content: [{ 
+                type: "text", 
+                text: JSON.stringify(response, null, 2)
+              }],
+              isError: false,
+            }));
+            break;
+          }
+          
+          default:
+            res.writeHead(400);
+            res.end(JSON.stringify({
+              error: `Unknown tool: ${name}`,
+              content: [{ type: 'text', text: `Unknown tool: ${name}` }],
+              isError: true
+            }));
+        }
+      } catch (error) {
+        res.writeHead(500);
+        res.end(JSON.stringify({
+          error: error instanceof Error ? error.message : String(error),
+          content: [{ type: 'text', text: `Error: ${error instanceof Error ? error.message : String(error)}` }],
+          isError: true
+        }));
+      }
+    });
+    return;
+  }
+  
   // Default response
   res.writeHead(200);
   res.end(JSON.stringify({ 
@@ -211,13 +445,16 @@ const server = http.createServer((req: any, res: any) => {
     timestamp: new Date().toISOString(),
     port: PORT,
     uptime: process.uptime(),
+    gongConfigured: !!gongClient,
     endpoints: {
       oauth_metadata: '/.well-known/oauth-authorization-server',
       protected_resource: '/.well-known/oauth-protected-resource',
       register: '/register',
       authorize: '/authorize',
       token: '/token',
-      health: '/health'
+      health: '/health',
+      tools: '/tools',
+      call_tool: '/call-tool'
     }
   }));
 });
