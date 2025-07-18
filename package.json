@@ -1,23 +1,8 @@
 {
-  "name": "gong-mcp",
-  "version": "0.1.0",
-  "description": "Gong MCP server implementation",
-  "main": "dist/minimal-server.js",
+  "name": "gong-mcp-server",
+  "version": "1.0.0",
   "type": "module",
   "scripts": {
-    "build": "tsc",
-    "start": "node dist/minimal-server.js",
-    "dev": "tsc && node dist/minimal-server.js",
-    "start:http": "node dist/http-server.js",
-    "start:mcp": "node dist/index.js"
-  },
-  "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.8.0",
-    "axios": "^1.6.7",
-    "dotenv": "^16.4.5"
-  },
-  "devDependencies": {
-    "@types/node": "^20.17.30",
-    "typescript": "^5.8.2"
+    "start": "node server.js"
   }
 }
