@@ -10,6 +10,7 @@ import {
 import axios from 'axios';
 import dotenv from 'dotenv';
 import crypto from 'crypto';
+import http from 'http';
 
 // Redirect all console output to stderr
 const originalConsole = { ...console };
@@ -53,22 +54,35 @@ interface GongTranscript {
   }>;
 }
 
+interface GongPaginationInfo {
+  totalRecords: number;
+  currentPageSize: number;
+  currentPageNumber: number;
+  cursor?: string;
+}
+
 interface GongListCallsResponse {
   calls: GongCall[];
+  records?: GongPaginationInfo;
 }
 
 interface GongRetrieveTranscriptsResponse {
   transcripts: GongTranscript[];
+  records?: GongPaginationInfo;
 }
 
 interface GongListCallsArgs {
-  [key: string]: string | undefined;
+  [key: string]: string | number | undefined;
   fromDateTime?: string;
   toDateTime?: string;
+  cursor?: string;
+  limit?: number;
 }
 
 interface GongRetrieveTranscriptsArgs {
   callIds: string[];
+  cursor?: string;
+  limit?: number;
 }
 
 // Gong API Client
@@ -104,7 +118,7 @@ class GongClient {
     return btoa(String.fromCharCode(...new Uint8Array(signature)));
   }
 
-  private async request<T>(method: string, path: string, params?: Record<string, string | undefined>, data?: Record<string, unknown>): Promise<T> {
+  private async request<T>(method: string, path: string, params?: Record<string, string | number | undefined>, data?: Record<string, unknown>): Promise<T> {
     const timestamp = new Date().toISOString();
     const url = `${GONG_API_URL}${path}`;
     
@@ -125,23 +139,30 @@ class GongClient {
     return response.data as T;
   }
 
-  async listCalls(fromDateTime?: string, toDateTime?: string): Promise<GongListCallsResponse> {
+  async listCalls(fromDateTime?: string, toDateTime?: string, cursor?: string, limit?: number): Promise<GongListCallsResponse> {
     const params: GongListCallsArgs = {};
     if (fromDateTime) params.fromDateTime = fromDateTime;
     if (toDateTime) params.toDateTime = toDateTime;
+    if (cursor) params.cursor = cursor;
+    if (limit) params.limit = limit;
 
     return this.request<GongListCallsResponse>('GET', '/calls', params);
   }
 
-  async retrieveTranscripts(callIds: string[]): Promise<GongRetrieveTranscriptsResponse> {
-    return this.request<GongRetrieveTranscriptsResponse>('POST', '/calls/transcript', undefined, {
+  async retrieveTranscripts(callIds: string[], cursor?: string, limit?: number): Promise<GongRetrieveTranscriptsResponse> {
+    const requestData: any = {
       filter: {
         callIds,
         includeEntities: true,
         includeInteractionsSummary: true,
         includeTrackers: true
       }
-    });
+    };
+
+    if (cursor) requestData.cursor = cursor;
+    if (limit) requestData.limit = limit;
+
+    return this.request<GongRetrieveTranscriptsResponse>('POST', '/calls/transcript', undefined, requestData);
   }
 }
 
@@ -150,7 +171,7 @@ const gongClient = new GongClient(GONG_ACCESS_KEY, GONG_ACCESS_SECRET);
 // Tool definitions
 const LIST_CALLS_TOOL: Tool = {
   name: "list_calls",
-  description: "List Gong calls with optional date range filtering. Returns call details including ID, title, start/end times, participants, and duration.",
+  description: "List Gong calls with optional date range filtering and pagination. Returns call details including ID, title, start/end times, participants, and duration. Supports pagination with cursor and limit parameters.",
   inputSchema: {
     type: "object",
     properties: {
@@ -161,6 +182,14 @@ const LIST_CALLS_TOOL: Tool = {
       toDateTime: {
         type: "string",
         description: "End date/time in ISO format (e.g. 2024-03-31T23:59:59Z)"
+      },
+      cursor: {
+        type: "string",
+        description: "Cursor for pagination. Use the cursor value from the previous response to get the next page of results."
+      },
+      limit: {
+        type: "integer",
+        description: "Maximum number of results to return (default: 100, max: 100)"
       }
     }
   }
@@ -168,7 +197,7 @@ const LIST_CALLS_TOOL: Tool = {
 
 const RETRIEVE_TRANSCRIPTS_TOOL: Tool = {
   name: "retrieve_transcripts",
-  description: "Retrieve transcripts for specified call IDs. Returns detailed transcripts including speaker IDs, topics, and timestamped sentences.",
+  description: "Retrieve transcripts for specified call IDs with pagination support. Returns detailed transcripts including speaker IDs, topics, and timestamped sentences.",
   inputSchema: {
     type: "object",
     properties: {
@@ -176,6 +205,14 @@ const RETRIEVE_TRANSCRIPTS_TOOL: Tool = {
         type: "array",
         items: { type: "string" },
         description: "Array of Gong call IDs to retrieve transcripts for"
+      },
+      cursor: {
+        type: "string",
+        description: "Cursor for pagination. Use the cursor value from the previous response to get the next page of results."
+      },
+      limit: {
+        type: "integer",
+        description: "Maximum number of results to return (default: 100, max: 100)"
       }
     },
     required: ["callIds"]
@@ -201,7 +238,9 @@ function isGongListCallsArgs(args: unknown): args is GongListCallsArgs {
     typeof args === "object" &&
     args !== null &&
     (!("fromDateTime" in args) || typeof (args as GongListCallsArgs).fromDateTime === "string") &&
-    (!("toDateTime" in args) || typeof (args as GongListCallsArgs).toDateTime === "string")
+    (!("toDateTime" in args) || typeof (args as GongListCallsArgs).toDateTime === "string") &&
+    (!("cursor" in args) || typeof (args as GongListCallsArgs).cursor === "string") &&
+    (!("limit" in args) || typeof (args as GongListCallsArgs).limit === "number")
   );
 }
 
@@ -211,7 +250,9 @@ function isGongRetrieveTranscriptsArgs(args: unknown): args is GongRetrieveTrans
     args !== null &&
     "callIds" in args &&
     Array.isArray((args as GongRetrieveTranscriptsArgs).callIds) &&
-    (args as GongRetrieveTranscriptsArgs).callIds.every(id => typeof id === "string")
+    (args as GongRetrieveTranscriptsArgs).callIds.every(id => typeof id === "string") &&
+    (!("cursor" in args) || typeof (args as GongRetrieveTranscriptsArgs).cursor === "string") &&
+    (!("limit" in args) || typeof (args as GongRetrieveTranscriptsArgs).limit === "number")
   );
 }
 
@@ -233,8 +274,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request: { params: { name
         if (!isGongListCallsArgs(args)) {
           throw new Error("Invalid arguments for list_calls");
         }
-        const { fromDateTime, toDateTime } = args;
-        const response = await gongClient.listCalls(fromDateTime, toDateTime);
+        const { fromDateTime, toDateTime, cursor, limit } = args;
+        const response = await gongClient.listCalls(fromDateTime, toDateTime, cursor, limit);
         return {
           content: [{ 
             type: "text", 
@@ -248,8 +289,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request: { params: { name
         if (!isGongRetrieveTranscriptsArgs(args)) {
           throw new Error("Invalid arguments for retrieve_transcripts");
         }
-        const { callIds } = args;
-        const response = await gongClient.retrieveTranscripts(callIds);
+        const { callIds, cursor, limit } = args;
+        const response = await gongClient.retrieveTranscripts(callIds, cursor, limit);
         return {
           content: [{ 
             type: "text", 
@@ -266,11 +307,12 @@ server.setRequestHandler(CallToolRequestSchema, async (request: { params: { name
         };
     }
   } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
     return {
       content: [
         {
           type: "text",
-          text: `Error: ${error instanceof Error ? error.message : String(error)}`,
+          text: `Error occurred while making the request. Please try again. Error details: ${errorMessage}`,
         },
       ],
       isError: true,
@@ -279,6 +321,27 @@ server.setRequestHandler(CallToolRequestSchema, async (request: { params: { name
 });
 
 async function runServer() {
+  // Check if running in Railway (or other hosted environment)
+  const PORT = process.env.PORT;
+  
+  if (PORT) {
+    // Running in hosted environment - create HTTP server for health checks
+    const httpServer = http.createServer((req, res) => {
+      if (req.url === '/health') {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ status: 'healthy', timestamp: new Date().toISOString() }));
+      } else {
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Not found' }));
+      }
+    });
+
+    httpServer.listen(PORT, () => {
+      console.error(`HTTP server running on port ${PORT} for health checks`);
+    });
+  }
+
+  // Connect MCP server to stdio transport
   const transport = new StdioServerTransport();
   await server.connect(transport);
 }
