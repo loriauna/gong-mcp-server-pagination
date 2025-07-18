@@ -35,12 +35,64 @@ const server = http.createServer((req, res) => {
     return;
   }
   
+  // OAuth Discovery endpoints that Claude expects
+  if (req.url === '/.well-known/oauth-authorization-server') {
+    console.error('OAuth authorization server metadata requested');
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({
+      issuer: `https://gong-mcp-server-pagination-production.up.railway.app`,
+      authorization_endpoint: `https://gong-mcp-server-pagination-production.up.railway.app/authorize`,
+      token_endpoint: `https://gong-mcp-server-pagination-production.up.railway.app/token`,
+      response_types_supported: ['code'],
+      grant_types_supported: ['authorization_code'],
+      scopes_supported: ['gong:read']
+    }));
+    return;
+  }
+  
+  if (req.url === '/.well-known/oauth-protected-resource') {
+    console.error('OAuth protected resource metadata requested');
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({
+      resource_server: `https://gong-mcp-server-pagination-production.up.railway.app`,
+      scopes_supported: ['gong:read']
+    }));
+    return;
+  }
+  
+  // Simple authorize endpoint
+  if (req.url?.startsWith('/authorize')) {
+    console.error('OAuth authorize endpoint requested');
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ message: 'OAuth authorize endpoint' }));
+    return;
+  }
+  
+  // Simple token endpoint
+  if (req.url === '/token') {
+    console.error('OAuth token endpoint requested');
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ 
+      access_token: 'demo_token',
+      token_type: 'Bearer',
+      expires_in: 3600
+    }));
+    return;
+  }
+  
   // Default response
   res.writeHead(200, { 'Content-Type': 'application/json' });
   res.end(JSON.stringify({ 
-    message: 'Gong MCP Server is running',
+    message: 'Gong MCP OAuth Server is running',
     port: PORT,
-    timestamp: new Date().toISOString()
+    timestamp: new Date().toISOString(),
+    endpoints: {
+      health: '/health',
+      oauth_metadata: '/.well-known/oauth-authorization-server',
+      protected_resource: '/.well-known/oauth-protected-resource',
+      authorize: '/authorize',
+      token: '/token'
+    }
   }));
 });
 

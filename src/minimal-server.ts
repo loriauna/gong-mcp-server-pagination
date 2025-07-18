@@ -36,27 +36,10 @@ class GongClient {
     this.accessSecret = accessSecret;
   }
 
-  private async generateSignature(method: string, path: string, timestamp: string, params?: unknown): Promise<string> {
+  private generateSignature(method: string, path: string, timestamp: string, params?: unknown): string {
     const stringToSign = `${method}\n${path}\n${timestamp}\n${params ? JSON.stringify(params) : ''}`;
-    const encoder = new TextEncoder();
-    const keyData = encoder.encode(this.accessSecret);
-    const messageData = encoder.encode(stringToSign);
-    
-    const cryptoKey = await crypto.subtle.importKey(
-      'raw',
-      keyData,
-      { name: 'HMAC', hash: 'SHA-256' },
-      false,
-      ['sign']
-    );
-    
-    const signature = await crypto.subtle.sign(
-      'HMAC',
-      cryptoKey,
-      messageData
-    );
-    
-    return btoa(String.fromCharCode(...new Uint8Array(signature)));
+    const signature = crypto.createHmac('sha256', this.accessSecret).update(stringToSign).digest('base64');
+    return signature;
   }
 
   private async request<T>(method: string, path: string, params?: Record<string, string | number | undefined>, data?: Record<string, unknown>): Promise<T> {
@@ -73,7 +56,7 @@ class GongClient {
         'Authorization': `Basic ${Buffer.from(`${this.accessKey}:${this.accessSecret}`).toString('base64')}`,
         'X-Gong-AccessKey': this.accessKey,
         'X-Gong-Timestamp': timestamp,
-        'X-Gong-Signature': await this.generateSignature(method, path, timestamp, data || params)
+        'X-Gong-Signature': this.generateSignature(method, path, timestamp, data || params)
       }
     });
 
