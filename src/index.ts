@@ -2,6 +2,7 @@
 
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
 import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
@@ -321,29 +322,47 @@ server.setRequestHandler(CallToolRequestSchema, async (request: { params: { name
 });
 
 async function runServer() {
-  // Check if running in Railway (or other hosted environment)
   const PORT = process.env.PORT;
   
   if (PORT) {
-    // Running in hosted environment - create HTTP server for health checks
-    const httpServer = http.createServer((req, res) => {
+    // Running in hosted environment - create HTTP MCP server with SSE
+    const httpServer = http.createServer(async (req, res) => {
       if (req.url === '/health') {
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ status: 'healthy', timestamp: new Date().toISOString() }));
-      } else {
-        res.writeHead(404, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: 'Not found' }));
+        return;
       }
+      
+      if (req.url === '/sse') {
+        // Handle SSE MCP connection
+        const transport = new SSEServerTransport('/message', res);
+        await server.connect(transport);
+        return;
+      }
+      
+      // Default response for other paths
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ 
+        name: 'Gong MCP Server', 
+        version: '0.1.0',
+        description: 'MCP server for Gong API with pagination support',
+        endpoints: {
+          health: '/health',
+          sse: '/sse'
+        }
+      }));
     });
 
     httpServer.listen(PORT, () => {
-      console.error(`HTTP server running on port ${PORT} for health checks`);
+      console.error(`MCP server running on port ${PORT}`);
+      console.error(`Health check: http://localhost:${PORT}/health`);
+      console.error(`SSE endpoint: http://localhost:${PORT}/sse`);
     });
+  } else {
+    // Running locally - use stdio transport
+    const transport = new StdioServerTransport();
+    await server.connect(transport);
   }
-
-  // Connect MCP server to stdio transport
-  const transport = new StdioServerTransport();
-  await server.connect(transport);
 }
 
 runServer().catch((error) => {
