@@ -2,12 +2,13 @@
   "name": "gong-mcp",
   "version": "0.1.0",
   "description": "Gong MCP server implementation",
-  "main": "dist/http-server.js",
+  "main": "dist/minimal-server.js",
   "type": "module",
   "scripts": {
     "build": "tsc",
-    "start": "node dist/http-server.js",
-    "dev": "tsc && node dist/http-server.js",
+    "start": "node dist/minimal-server.js",
+    "dev": "tsc && node dist/minimal-server.js",
+    "start:http": "node dist/http-server.js",
     "start:mcp": "node dist/index.js"
   },
   "dependencies": {
