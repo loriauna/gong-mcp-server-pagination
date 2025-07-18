@@ -2,7 +2,6 @@
 
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
 import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
@@ -325,18 +324,52 @@ async function runServer() {
   const PORT = process.env.PORT;
   
   if (PORT) {
-    // Running in hosted environment - create HTTP MCP server with SSE
+    // Running in hosted environment - create HTTP server for MCP endpoints
     const httpServer = http.createServer(async (req, res) => {
+      // Enable CORS for web clients
+      res.setHeader('Access-Control-Allow-Origin', '*');
+      res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+      res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+      
+      if (req.method === 'OPTIONS') {
+        res.writeHead(200);
+        res.end();
+        return;
+      }
+      
       if (req.url === '/health') {
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ status: 'healthy', timestamp: new Date().toISOString() }));
         return;
       }
       
-      if (req.url === '/sse') {
-        // Handle SSE MCP connection
-        const transport = new SSEServerTransport('/message', res);
-        await server.connect(transport);
+      if (req.url === '/mcp/tools/list' && req.method === 'GET') {
+        // Return available tools
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          tools: [LIST_CALLS_TOOL, RETRIEVE_TRANSCRIPTS_TOOL]
+        }));
+        return;
+      }
+      
+      if (req.url === '/mcp/tools/call' && req.method === 'POST') {
+        // Handle tool calls
+        let body = '';
+        req.on('data', chunk => body += chunk.toString());
+        req.on('end', async () => {
+          try {
+            const request = JSON.parse(body);
+            const result = await handleToolCall(request);
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify(result));
+          } catch (error) {
+            res.writeHead(500, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ 
+              error: 'Internal server error',
+              details: error instanceof Error ? error.message : String(error)
+            }));
+          }
+        });
         return;
       }
       
@@ -348,7 +381,8 @@ async function runServer() {
         description: 'MCP server for Gong API with pagination support',
         endpoints: {
           health: '/health',
-          sse: '/sse'
+          listTools: '/mcp/tools/list',
+          callTool: '/mcp/tools/call'
         }
       }));
     });
@@ -356,12 +390,72 @@ async function runServer() {
     httpServer.listen(PORT, () => {
       console.error(`MCP server running on port ${PORT}`);
       console.error(`Health check: http://localhost:${PORT}/health`);
-      console.error(`SSE endpoint: http://localhost:${PORT}/sse`);
+      console.error(`Tools endpoint: http://localhost:${PORT}/mcp/tools/list`);
     });
   } else {
     // Running locally - use stdio transport
     const transport = new StdioServerTransport();
     await server.connect(transport);
+  }
+}
+
+// Handle tool calls for HTTP endpoint
+async function handleToolCall(request: { name: string; arguments?: unknown }) {
+  try {
+    const { name, arguments: args } = request;
+
+    if (!args) {
+      throw new Error("No arguments provided");
+    }
+
+    switch (name) {
+      case "list_calls": {
+        if (!isGongListCallsArgs(args)) {
+          throw new Error("Invalid arguments for list_calls");
+        }
+        const { fromDateTime, toDateTime, cursor, limit } = args;
+        const response = await gongClient.listCalls(fromDateTime, toDateTime, cursor, limit);
+        return {
+          content: [{ 
+            type: "text", 
+            text: JSON.stringify(response, null, 2)
+          }],
+          isError: false,
+        };
+      }
+
+      case "retrieve_transcripts": {
+        if (!isGongRetrieveTranscriptsArgs(args)) {
+          throw new Error("Invalid arguments for retrieve_transcripts");
+        }
+        const { callIds, cursor, limit } = args;
+        const response = await gongClient.retrieveTranscripts(callIds, cursor, limit);
+        return {
+          content: [{ 
+            type: "text", 
+            text: JSON.stringify(response, null, 2)
+          }],
+          isError: false,
+        };
+      }
+
+      default:
+        return {
+          content: [{ type: "text", text: `Unknown tool: ${name}` }],
+          isError: true,
+        };
+    }
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    return {
+      content: [
+        {
+          type: "text",
+          text: `Error occurred while making the request. Please try again. Error details: ${errorMessage}`,
+        },
+      ],
+      isError: true,
+    };
   }
 }
 
