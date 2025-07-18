@@ -24,8 +24,9 @@ const GONG_API_URL = 'https://api.gong.io/v2';
 const GONG_ACCESS_KEY = process.env.GONG_ACCESS_KEY;
 const GONG_ACCESS_SECRET = process.env.GONG_ACCESS_SECRET;
 
-// Check for required environment variables
-if (!GONG_ACCESS_KEY || !GONG_ACCESS_SECRET) {
+// Check for required environment variables (only when not just doing health checks)
+const PORT = process.env.PORT;
+if (!PORT && (!GONG_ACCESS_KEY || !GONG_ACCESS_SECRET)) {
   console.error("Error: GONG_ACCESS_KEY and GONG_ACCESS_SECRET environment variables are required");
   process.exit(1);
 }
@@ -166,7 +167,9 @@ class GongClient {
   }
 }
 
-const gongClient = new GongClient(GONG_ACCESS_KEY, GONG_ACCESS_SECRET);
+const gongClient = GONG_ACCESS_KEY && GONG_ACCESS_SECRET ? 
+  new GongClient(GONG_ACCESS_KEY, GONG_ACCESS_SECRET) : 
+  null;
 
 // Tool definitions
 const LIST_CALLS_TOOL: Tool = {
@@ -275,6 +278,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request: { params: { name
           throw new Error("Invalid arguments for list_calls");
         }
         const { fromDateTime, toDateTime, cursor, limit } = args;
+        if (!gongClient) {
+          throw new Error("Gong API credentials not configured");
+        }
         const response = await gongClient.listCalls(fromDateTime, toDateTime, cursor, limit);
         return {
           content: [{ 
@@ -290,6 +296,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request: { params: { name
           throw new Error("Invalid arguments for retrieve_transcripts");
         }
         const { callIds, cursor, limit } = args;
+        if (!gongClient) {
+          throw new Error("Gong API credentials not configured");
+        }
         const response = await gongClient.retrieveTranscripts(callIds, cursor, limit);
         return {
           content: [{ 
@@ -345,6 +354,11 @@ async function runServer() {
       
       if (req.url === '/mcp/tools/list' && req.method === 'GET') {
         // Return available tools
+        if (!gongClient) {
+          res.writeHead(503, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'Gong API credentials not configured' }));
+          return;
+        }
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({
           tools: [LIST_CALLS_TOOL, RETRIEVE_TRANSCRIPTS_TOOL]
@@ -354,6 +368,11 @@ async function runServer() {
       
       if (req.url === '/mcp/tools/call' && req.method === 'POST') {
         // Handle tool calls
+        if (!gongClient) {
+          res.writeHead(503, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'Gong API credentials not configured' }));
+          return;
+        }
         let body = '';
         req.on('data', chunk => body += chunk.toString());
         req.on('end', async () => {
@@ -404,6 +423,10 @@ async function handleToolCall(request: { name: string; arguments?: unknown }) {
   try {
     const { name, arguments: args } = request;
 
+    if (!gongClient) {
+      throw new Error("Gong API credentials not configured");
+    }
+
     if (!args) {
       throw new Error("No arguments provided");
     }
@@ -414,6 +437,9 @@ async function handleToolCall(request: { name: string; arguments?: unknown }) {
           throw new Error("Invalid arguments for list_calls");
         }
         const { fromDateTime, toDateTime, cursor, limit } = args;
+        if (!gongClient) {
+          throw new Error("Gong API credentials not configured");
+        }
         const response = await gongClient.listCalls(fromDateTime, toDateTime, cursor, limit);
         return {
           content: [{ 
@@ -429,6 +455,9 @@ async function handleToolCall(request: { name: string; arguments?: unknown }) {
           throw new Error("Invalid arguments for retrieve_transcripts");
         }
         const { callIds, cursor, limit } = args;
+        if (!gongClient) {
+          throw new Error("Gong API credentials not configured");
+        }
         const response = await gongClient.retrieveTranscripts(callIds, cursor, limit);
         return {
           content: [{ 
