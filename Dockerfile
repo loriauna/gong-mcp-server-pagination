@@ -11,8 +11,5 @@ RUN npm install 2>&1
 # Copy source code
 COPY . .
 
-# Build TypeScript code
-RUN npm run build 2>&1
-
-# Start the server
-CMD ["node", "dist/ultra-minimal.js"] 
+# Start the server directly with JavaScript
+CMD ["node", "server.js"] 
