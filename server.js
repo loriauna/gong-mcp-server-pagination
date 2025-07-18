@@ -10,6 +10,7 @@ console.log('✅ HTTP and URL modules imported successfully');
 
 const PORT = process.env.PORT || 3000;
 const BASE_URL = process.env.RAILWAY_STATIC_URL || `https://gong-mcp-server-pagination-production.up.railway.app`;
+const PROTOCOL = BASE_URL.startsWith('http') ? BASE_URL : `https://${BASE_URL}`;
 
 console.log(`🌐 Port configured: ${PORT}`);
 console.log(`🔗 Base URL: ${BASE_URL}`);
@@ -36,7 +37,7 @@ const server = http.createServer((req, res) => {
       return;
     }
     
-    const url = new URL(req.url, BASE_URL);
+    const url = new URL(req.url, PROTOCOL);
     const path = url.pathname;
     
     if (path === '/health') {
@@ -57,10 +58,10 @@ const server = http.createServer((req, res) => {
       console.log('🔐 OAuth authorization server metadata requested');
       res.writeHead(200);
       res.end(JSON.stringify({
-        issuer: BASE_URL,
-        authorization_endpoint: `${BASE_URL}/authorize`,
-        token_endpoint: `${BASE_URL}/token`,
-        registration_endpoint: `${BASE_URL}/register`,
+        issuer: PROTOCOL,
+        authorization_endpoint: `${PROTOCOL}/authorize`,
+        token_endpoint: `${PROTOCOL}/token`,
+        registration_endpoint: `${PROTOCOL}/register`,
         response_types_supported: ['code'],
         grant_types_supported: ['authorization_code'],
         token_endpoint_auth_methods_supported: ['client_secret_basic', 'client_secret_post'],
@@ -74,8 +75,8 @@ const server = http.createServer((req, res) => {
       console.log('🔐 OAuth protected resource metadata requested');
       res.writeHead(200);
       res.end(JSON.stringify({
-        resource_server: BASE_URL,
-        authorization_servers: [BASE_URL],
+        resource_server: PROTOCOL,
+        authorization_servers: [PROTOCOL],
         scopes_supported: ['gong:read'],
         bearer_methods_supported: ['header', 'query']
       }));
@@ -95,7 +96,7 @@ const server = http.createServer((req, res) => {
           clients.set(clientId, {
             client_id: clientId,
             client_secret: clientSecret,
-            redirect_uris: clientData.redirect_uris || [`${BASE_URL}/callback`],
+            redirect_uris: clientData.redirect_uris || [`${PROTOCOL}/callback`],
             grant_types: ['authorization_code'],
             response_types: ['code'],
             scope: 'gong:read'
@@ -105,7 +106,7 @@ const server = http.createServer((req, res) => {
           res.end(JSON.stringify({
             client_id: clientId,
             client_secret: clientSecret,
-            redirect_uris: [`${BASE_URL}/callback`],
+            redirect_uris: [`${PROTOCOL}/callback`],
             grant_types: ['authorization_code'],
             response_types: ['code'],
             scope: 'gong:read'
@@ -143,7 +144,7 @@ const server = http.createServer((req, res) => {
       });
       
       // Redirect with authorization code
-      const callback = new URL(redirectUri || `${BASE_URL}/callback`);
+      const callback = new URL(redirectUri || `${PROTOCOL}/callback`);
       callback.searchParams.set('code', authCode);
       if (state) callback.searchParams.set('state', state);
       
@@ -222,7 +223,7 @@ const server = http.createServer((req, res) => {
         port: PORT,
         timestamp: new Date().toISOString(),
         uptime: process.uptime(),
-        baseUrl: BASE_URL,
+        baseUrl: PROTOCOL,
         endpoints: {
           health: '/health',
           oauth_metadata: '/.well-known/oauth-authorization-server',
