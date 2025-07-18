@@ -406,10 +406,10 @@ async function runServer() {
       }));
     });
 
-    httpServer.listen(PORT, () => {
+    httpServer.listen(parseInt(PORT), '0.0.0.0', () => {
       console.error(`MCP server running on port ${PORT}`);
-      console.error(`Health check: http://localhost:${PORT}/health`);
-      console.error(`Tools endpoint: http://localhost:${PORT}/mcp/tools/list`);
+      console.error(`Health check: http://0.0.0.0:${PORT}/health`);
+      console.error(`Tools endpoint: http://0.0.0.0:${PORT}/mcp/tools/list`);
     });
   } else {
     // Running locally - use stdio transport
