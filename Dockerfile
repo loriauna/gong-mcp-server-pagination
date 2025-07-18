@@ -15,4 +15,4 @@ COPY . .
 RUN npm run build 2>&1
 
 # Start the server
-CMD ["sh", "-c", "node dist/mcp-http-server.js 2>&1"] 
+CMD ["sh", "-c", "node dist/simple-server.js 2>&1"] 

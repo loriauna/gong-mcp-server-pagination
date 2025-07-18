@@ -2,12 +2,12 @@
   "name": "gong-mcp",
   "version": "0.1.0",
   "description": "Gong MCP server implementation",
-  "main": "dist/mcp-http-server.js",
+  "main": "dist/simple-server.js",
   "type": "module",
   "scripts": {
     "build": "tsc",
-    "start": "node dist/mcp-http-server.js",
-    "dev": "tsc && node dist/mcp-http-server.js"
+    "start": "node dist/simple-server.js",
+    "dev": "tsc && node dist/simple-server.js"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.8.0",
