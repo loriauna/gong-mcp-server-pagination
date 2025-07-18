@@ -15,8 +15,8 @@ const PORT = process.env.PORT || 3000;
 
 // Check for required environment variables
 if (!GONG_ACCESS_KEY || !GONG_ACCESS_SECRET) {
-  console.error("Error: GONG_ACCESS_KEY and GONG_ACCESS_SECRET environment variables are required");
-  process.exit(1);
+  console.error("Warning: GONG_ACCESS_KEY and GONG_ACCESS_SECRET environment variables are not set");
+  console.error("API endpoints will return errors, but health check will still work");
 }
 
 // Type definitions
@@ -155,7 +155,9 @@ class GongClient {
   }
 }
 
-const gongClient = new GongClient(GONG_ACCESS_KEY, GONG_ACCESS_SECRET);
+const gongClient = GONG_ACCESS_KEY && GONG_ACCESS_SECRET ? 
+  new GongClient(GONG_ACCESS_KEY, GONG_ACCESS_SECRET) : 
+  null;
 
 // Type guards
 function isGongListCallsArgs(args: unknown): args is GongListCallsArgs {
@@ -183,12 +185,18 @@ function isGongRetrieveTranscriptsArgs(args: unknown): args is GongRetrieveTrans
 
 // Tool handlers
 async function handleListCalls(args: GongListCallsArgs) {
+  if (!gongClient) {
+    throw new Error("Gong API credentials not configured");
+  }
   const { fromDateTime, toDateTime, cursor, limit } = args;
   const response = await gongClient.listCalls(fromDateTime, toDateTime, cursor, limit);
   return response;
 }
 
 async function handleRetrieveTranscripts(args: GongRetrieveTranscriptsArgs) {
+  if (!gongClient) {
+    throw new Error("Gong API credentials not configured");
+  }
   const { callIds, cursor, limit } = args;
   const response = await gongClient.retrieveTranscripts(callIds, cursor, limit);
   return response;
@@ -380,12 +388,18 @@ const server = http.createServer(async (req, res) => {
 });
 
 // Start server
+console.error(`Starting Gong MCP HTTP Server...`);
+console.error(`Environment: NODE_ENV=${process.env.NODE_ENV || 'development'}`);
+console.error(`Port: ${PORT}`);
+console.error(`Gong credentials configured: ${!!(GONG_ACCESS_KEY && GONG_ACCESS_SECRET)}`);
+
 server.listen(parseInt(PORT.toString()), '0.0.0.0', () => {
-  console.error(`Gong MCP HTTP Server running on port ${PORT}`);
+  console.error(`✅ Gong MCP HTTP Server running on port ${PORT}`);
   console.error(`Health check: http://0.0.0.0:${PORT}/health`);
   console.error(`API documentation: http://0.0.0.0:${PORT}/api`);
   console.error(`List calls: http://0.0.0.0:${PORT}/api/calls`);
   console.error(`Retrieve transcripts: http://0.0.0.0:${PORT}/api/transcripts`);
+  console.error(`Server startup complete at ${new Date().toISOString()}`);
 });
 
 // Graceful shutdown
