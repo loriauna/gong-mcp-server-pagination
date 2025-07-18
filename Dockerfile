@@ -15,4 +15,4 @@ COPY . .
 RUN npm run build 2>&1
 
 # Start the server
-CMD ["sh", "-c", "node dist/index.js 2>&1"] 
+CMD ["sh", "-c", "node dist/http-server.js 2>&1"] 

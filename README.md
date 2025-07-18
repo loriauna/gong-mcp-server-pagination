@@ -1,121 +1,199 @@
-# Gong MCP Server
+# Gong MCP Server with Pagination
 
-A Model Context Protocol (MCP) server that provides access to Gong's API for retrieving call recordings and transcripts. This server allows Claude to interact with Gong data through a standardized interface.
+A Model Context Protocol (MCP) server and HTTP API for accessing Gong's API with pagination support. This project provides two ways to use the Gong API:
+
+1. **MCP Server** (`index.ts`) - For local use with Claude Desktop
+2. **HTTP API Server** (`http-server.ts`) - For Railway deployment and web access
 
 ## Features
 
-- List Gong calls with optional date range filtering
-- Retrieve detailed transcripts for specific calls
-- Secure authentication using Gong's API credentials
-- Standardized MCP interface for easy integration with Claude
+- ✅ **Pagination Support** - Handle large datasets with cursor-based pagination
+- ✅ **List Calls** - Retrieve Gong calls with date range filtering
+- ✅ **Retrieve Transcripts** - Get detailed transcripts for specific calls
+- ✅ **Railway Deployment** - Ready for cloud deployment
+- ✅ **Local MCP Usage** - Compatible with Claude Desktop
 
-## Prerequisites
+## Setup
 
-- Node.js 18 or higher
-- Docker (optional, for containerized deployment)
-- Gong API credentials (Access Key and Secret)
+### Environment Variables
 
-## Installation
+Create a `.env` file:
 
-### Local Development
-
-1. Clone the repository
-2. Install dependencies:
-   ```bash
-   npm install
-   ```
-3. Build the project:
-   ```bash
-   npm run build
-   ```
-
-### Docker
-
-Build the container:
 ```bash
-docker build -t gong-mcp .
+GONG_ACCESS_KEY=your_gong_access_key
+GONG_ACCESS_SECRET=your_gong_access_secret
+PORT=3000  # Optional, defaults to 3000
 ```
 
-## Configuring Claude
+### Installation
 
-1. Open Claude Desktop settings
-2. Navigate to the MCP Servers section
-3. Add a new server with the following configuration:
+```bash
+npm install
+npm run build
+```
 
-```json
+## Usage
+
+### Option 1: HTTP API Server (For Railway/Web)
+
+Start the HTTP server:
+
+```bash
+npm start
+```
+
+#### API Endpoints
+
+**Health Check:**
+```
+GET /health
+```
+
+**List Calls:**
+```
+GET /api/calls?fromDateTime=2024-01-01T00:00:00Z&toDateTime=2024-12-31T23:59:59Z&limit=50
+POST /api/calls
+Content-Type: application/json
+
 {
-  "command": "docker",
-  "args": [
-    "run",
-    "-it",
-    "--rm",
-    "gong-mcp"
-  ],
-  "env": {
-    "GONG_ACCESS_KEY": "your_access_key_here",
-    "GONG_ACCESS_SECRET": "your_access_secret_here"
-  }
+  "fromDateTime": "2024-01-01T00:00:00Z",
+  "toDateTime": "2024-12-31T23:59:59Z",
+  "cursor": "optional_cursor_for_pagination",
+  "limit": 50
 }
 ```
 
-4. Replace the placeholder credentials with your actual Gong API credentials from your `.env` file
+**Retrieve Transcripts:**
+```
+GET /api/transcripts?callIds=123,456,789&limit=50
+POST /api/transcripts
+Content-Type: application/json
 
-## Available Tools
-
-### List Calls
-
-Retrieves a list of Gong calls with optional date range filtering.
-
-```typescript
 {
-  name: "list_calls",
-  description: "List Gong calls with optional date range filtering. Returns call details including ID, title, start/end times, participants, and duration.",
-  inputSchema: {
-    type: "object",
-    properties: {
-      fromDateTime: {
-        type: "string",
-        description: "Start date/time in ISO format (e.g. 2024-03-01T00:00:00Z)"
-      },
-      toDateTime: {
-        type: "string",
-        description: "End date/time in ISO format (e.g. 2024-03-31T23:59:59Z)"
+  "callIds": ["123", "456", "789"],
+  "cursor": "optional_cursor_for_pagination",
+  "limit": 50
+}
+```
+
+**API Documentation:**
+```
+GET /api
+```
+
+### Option 2: MCP Server (For Local Claude Desktop)
+
+Start the MCP server:
+
+```bash
+npm run start:mcp
+```
+
+Configure in Claude Desktop (`claude_desktop_config.json`):
+
+```json
+{
+  "mcpServers": {
+    "gong": {
+      "command": "node",
+      "args": ["path/to/your/project/dist/index.js"],
+      "env": {
+        "GONG_ACCESS_KEY": "your_access_key",
+        "GONG_ACCESS_SECRET": "your_access_secret"
       }
     }
   }
 }
 ```
 
-### Retrieve Transcripts
+## Pagination
 
-Retrieves detailed transcripts for specified call IDs.
+Both servers support Gong's cursor-based pagination:
 
-```typescript
+1. **First Request**: Don't include `cursor` parameter
+2. **Subsequent Requests**: Use the `cursor` value from the previous response's `records.cursor` field
+3. **Page Size**: Use `limit` parameter (default: 100, max: 100)
+
+Example pagination workflow:
+
+```javascript
+// First request
+const response1 = await fetch('/api/calls?limit=50');
+const data1 = await response1.json();
+
+// Check if there are more pages
+if (data1.records?.cursor) {
+  // Get next page
+  const response2 = await fetch(`/api/calls?limit=50&cursor=${data1.records.cursor}`);
+  const data2 = await response2.json();
+}
+```
+
+## Railway Deployment
+
+1. **Connect your GitHub repository** to Railway
+2. **Set environment variables** in Railway dashboard:
+   - `GONG_ACCESS_KEY`
+   - `GONG_ACCESS_SECRET`
+3. **Deploy** - Railway will automatically detect and use the Dockerfile
+
+The server will be available at: `https://your-app-name.railway.app`
+
+## Local Development
+
+```bash
+# Install dependencies
+npm install
+
+# Build TypeScript
+npm run build
+
+# Start HTTP server
+npm run dev
+
+# Start MCP server
+npm run start:mcp
+```
+
+## Project Structure
+
+```
+├── src/
+│   ├── index.ts          # MCP server (stdio transport)
+│   ├── http-server.ts    # HTTP API server
+│   └── simple-server.ts  # Basic HTTP server for testing
+├── Dockerfile            # Railway deployment config
+├── package.json
+├── tsconfig.json
+└── README.md
+```
+
+## API Response Format
+
+All API responses include pagination information:
+
+```json
 {
-  name: "retrieve_transcripts",
-  description: "Retrieve transcripts for specified call IDs. Returns detailed transcripts including speaker IDs, topics, and timestamped sentences.",
-  inputSchema: {
-    type: "object",
-    properties: {
-      callIds: {
-        type: "array",
-        items: { type: "string" },
-        description: "Array of Gong call IDs to retrieve transcripts for"
-      }
-    },
-    required: ["callIds"]
+  "calls": [...],  // or "transcripts": [...]
+  "records": {
+    "totalRecords": 150,
+    "currentPageSize": 50,
+    "currentPageNumber": 1,
+    "cursor": "eyJhbGciOiJIUzI1NiJ9..."
   }
+}
+```
+
+## Error Handling
+
+The server provides detailed error messages:
+
+```json
+{
+  "error": "Invalid parameters for list_calls"
 }
 ```
 
 ## License
 
-MIT License - see LICENSE file for details
-
-## Contributing
-
-1. Fork the repository
-2. Create your feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add some amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request 
+MIT License
