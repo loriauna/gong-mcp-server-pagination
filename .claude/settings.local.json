@@ -25,7 +25,8 @@
       "Bash(grep:*)",
       "Bash(rm:*)",
       "WebFetch(domain:docs.anthropic.com)",
-      "WebFetch(domain:mcp-framework.com)"
+      "WebFetch(domain:mcp-framework.com)",
+      "WebFetch(domain:simplescraper.io)"
     ],
     "deny": []
   }

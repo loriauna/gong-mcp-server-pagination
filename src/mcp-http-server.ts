@@ -506,6 +506,13 @@ async function createHTTPMCPServer() {
       return;
     }
 
+    // Handle messages endpoint for legacy clients
+    if (path === '/messages' && req.method === 'POST') {
+      console.error('Messages endpoint accessed (legacy MCP):', req.headers);
+      await handleMCPRequest(req, res);
+      return;
+    }
+
     // Try handling MCP at root for some clients
     if (path === '/' && req.method === 'POST') {
       console.error('Root POST request (possible MCP):', req.headers);
@@ -611,9 +618,14 @@ async function handleMCPRequest(req: http.IncomingMessage, res: http.ServerRespo
           if (request.method === 'initialize') {
             console.error('🎉 INITIALIZE method called - MCP handshake starting!');
           } else if (request.method === 'tools/list') {
-            console.error('🔧 TOOLS/LIST called - this should come after initialize');
+            console.error('🔧 TOOLS/LIST called');
+            console.error('Session initialized?', !!session);
+          } else if (request.method === 'prompts/list') {
+            console.error('💭 PROMPTS/LIST called');
+          } else if (request.method === 'resources/list') {
+            console.error('📚 RESOURCES/LIST called');
           } else {
-            console.error('❓ Unknown method:', request.method);
+            console.error('❓ Other method:', request.method);
           }
           
           // Handle the request based on JSON-RPC method
@@ -696,7 +708,11 @@ async function handleMCPRequest(req: http.IncomingMessage, res: http.ServerRespo
           }
 
           console.error('MCP JSON-RPC response:', JSON.stringify(response, null, 2));
-          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.writeHead(200, { 
+            'Content-Type': 'application/json',
+            'X-MCP-Version': '2024-11-05',
+            'X-MCP-Implementation': 'gong-mcp-server'
+          });
           res.end(JSON.stringify(response));
         } catch (error) {
           res.writeHead(400, { 'Content-Type': 'application/json' });
