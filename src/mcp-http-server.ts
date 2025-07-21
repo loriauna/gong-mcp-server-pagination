@@ -456,8 +456,11 @@ async function createHTTPMCPServer() {
         // MCP-specific extensions
         mcp_endpoint: `${PROTOCOL}/mcp`,
         mcp_protocol_version: '2024-11-05',
-        mcp_capabilities: ['tools'],
-        mcp_transport: 'http'
+        mcp_capabilities: ['tools', 'resources', 'prompts'],
+        mcp_transport: 'http',
+        // Alternative MCP discovery methods
+        mcp_server_url: `${PROTOCOL}/mcp`,
+        modelcontextprotocol_endpoint: `${PROTOCOL}/mcp`
       }));
       return;
     }
@@ -469,11 +472,14 @@ async function createHTTPMCPServer() {
         authorization_servers: [PROTOCOL],
         scopes_supported: ['gong:read'],
         bearer_methods_supported: ['header', 'query'],
-        // MCP-specific extensions
+        // MCP-specific extensions  
         mcp_endpoint: `${PROTOCOL}/mcp`,
         mcp_protocol_version: '2024-11-05',
-        mcp_capabilities: ['tools'],
-        mcp_transport: 'http'
+        mcp_capabilities: ['tools', 'resources', 'prompts'],
+        mcp_transport: 'http',
+        // Alternative MCP discovery methods
+        mcp_server_url: `${PROTOCOL}/mcp`,
+        modelcontextprotocol_endpoint: `${PROTOCOL}/mcp`
       }));
       return;
     }
@@ -599,6 +605,16 @@ async function handleMCPRequest(req: http.IncomingMessage, res: http.ServerRespo
         try {
           const request = JSON.parse(body);
           console.error('MCP JSON-RPC request:', JSON.stringify(request, null, 2));
+          console.error('Request method:', request.method);
+          console.error('Has ID:', !!request.id);
+          
+          if (request.method === 'initialize') {
+            console.error('🎉 INITIALIZE method called - MCP handshake starting!');
+          } else if (request.method === 'tools/list') {
+            console.error('🔧 TOOLS/LIST called - this should come after initialize');
+          } else {
+            console.error('❓ Unknown method:', request.method);
+          }
           
           // Handle the request based on JSON-RPC method
           let response;
@@ -657,6 +673,16 @@ async function handleMCPRequest(req: http.IncomingMessage, res: http.ServerRespo
                   version: '0.1.0'
                 }
               }
+            };
+          } else if (request.method === 'notifications/initialized') {
+            // Handle initialized notification - no response needed
+            console.error('MCP initialized notification received');
+            return;
+          } else if (request.method === 'ping') {
+            response = {
+              jsonrpc: '2.0',
+              id: request.id,
+              result: {}
             };
           } else {
             response = {
