@@ -428,6 +428,45 @@ async function createHTTPMCPServer() {
     const url = new URL(req.url || '', `http://localhost:${PORT}`);
     const path = url.pathname;
 
+    // MCP Manifest endpoint
+    if (path === '/mcp.json' || path === '/.well-known/mcp.json' || path === '/manifest.json') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        type: 'mcp-server',
+        version: '0.1.0',
+        protocol_version: '2024-11-05',
+        name: 'Gong MCP Server',
+        description: 'Access Gong call data through MCP',
+        vendor: 'gong-mcp',
+        capabilities: {
+          tools: true,
+          resources: true,
+          prompts: true,
+          oauth: true
+        },
+        endpoints: {
+          mcp: '/mcp',
+          messages: '/messages',
+          oauth: {
+            authorize: '/authorize',
+            token: '/token',
+            register: '/register'
+          }
+        },
+        tools: [
+          {
+            name: 'list_calls',
+            description: 'List Gong calls with filtering'
+          },
+          {
+            name: 'retrieve_transcripts',
+            description: 'Get call transcripts'
+          }
+        ]
+      }));
+      return;
+    }
+
     // Health check endpoint
     if (path === '/health') {
       res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -533,14 +572,20 @@ async function createHTTPMCPServer() {
     }
 
     // Default response
-    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.writeHead(200, { 
+      'Content-Type': 'application/json',
+      'X-MCP-Server': 'true'
+    });
     res.end(JSON.stringify({ 
+      type: 'mcp-server',
       name: 'Gong MCP Server', 
       version: '0.1.0',
       description: 'MCP server for Gong API with OAuth support',
+      mcp_manifest: `${PROTOCOL}/mcp.json`,
       endpoints: {
         health: '/health',
         mcp: '/mcp',
+        manifest: '/mcp.json',
         oauth_metadata: '/.well-known/oauth-authorization-server',
         protected_resource: '/.well-known/oauth-protected-resource',
         register: '/register',
@@ -551,7 +596,7 @@ async function createHTTPMCPServer() {
         endpoint: '/mcp',
         protocol_version: '2024-11-05',
         transport: 'http',
-        capabilities: ['tools'],
+        capabilities: ['tools', 'resources', 'prompts'],
         tools_available: ['list_calls', 'retrieve_transcripts']
       }
     }));
