@@ -445,6 +445,7 @@ async function createHTTPMCPServer() {
           oauth: true
         },
         endpoints: {
+          sse: '/sse',
           mcp: '/mcp',
           messages: '/messages',
           oauth: {
@@ -493,13 +494,14 @@ async function createHTTPMCPServer() {
         scopes_supported: ['gong:read'],
         code_challenge_methods_supported: ['S256'],
         // MCP-specific extensions
-        mcp_endpoint: `${PROTOCOL}/mcp`,
-        mcp_protocol_version: '2024-11-05',
+        mcp_endpoint: `${PROTOCOL}/sse`,
+        mcp_sse_endpoint: `${PROTOCOL}/sse`,
+        mcp_protocol_version: '2025-06-18',
         mcp_capabilities: ['tools', 'resources', 'prompts'],
-        mcp_transport: 'http',
+        mcp_transport: 'sse',
         // Alternative MCP discovery methods
-        mcp_server_url: `${PROTOCOL}/mcp`,
-        modelcontextprotocol_endpoint: `${PROTOCOL}/mcp`
+        mcp_server_url: `${PROTOCOL}/sse`,
+        modelcontextprotocol_endpoint: `${PROTOCOL}/sse`
       }));
       return;
     }
@@ -512,13 +514,14 @@ async function createHTTPMCPServer() {
         scopes_supported: ['gong:read'],
         bearer_methods_supported: ['header', 'query'],
         // MCP-specific extensions  
-        mcp_endpoint: `${PROTOCOL}/mcp`,
-        mcp_protocol_version: '2024-11-05',
+        mcp_endpoint: `${PROTOCOL}/sse`,
+        mcp_sse_endpoint: `${PROTOCOL}/sse`,
+        mcp_protocol_version: '2025-06-18',
         mcp_capabilities: ['tools', 'resources', 'prompts'],
-        mcp_transport: 'http',
+        mcp_transport: 'sse',
         // Alternative MCP discovery methods
-        mcp_server_url: `${PROTOCOL}/mcp`,
-        modelcontextprotocol_endpoint: `${PROTOCOL}/mcp`
+        mcp_server_url: `${PROTOCOL}/sse`,
+        modelcontextprotocol_endpoint: `${PROTOCOL}/sse`
       }));
       return;
     }
@@ -535,6 +538,13 @@ async function createHTTPMCPServer() {
 
     if (path === '/token' && req.method === 'POST') {
       await handleOAuthToken(req, res);
+      return;
+    }
+
+    // SSE endpoint for MCP (this is what remote MCP servers typically use)
+    if (path === '/sse' && req.method === 'GET') {
+      console.error('SSE endpoint accessed for MCP streaming:', req.headers);
+      await handleSSEConnection(req, res);
       return;
     }
 
@@ -1057,6 +1067,103 @@ async function handleOAuthToken(req: http.IncomingMessage, res: http.ServerRespo
       res.writeHead(400, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: 'invalid_request' }));
     }
+  });
+}
+
+// SSE Connection Handler for Remote MCP
+async function handleSSEConnection(req: http.IncomingMessage, res: http.ServerResponse) {
+  console.error('=== SSE CONNECTION START ===');
+  
+  // Check for OAuth authorization
+  const authHeader = req.headers['authorization'] as string;
+  console.error('SSE OAuth token present:', !!authHeader);
+  
+  // Set up SSE headers
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache',
+    'Connection': 'keep-alive',
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Headers': 'Cache-Control',
+  });
+
+  // Create session for this SSE connection
+  const sessionId = randomUUID();
+  connectionAttempts++;
+  console.error(`Creating SSE session #${connectionAttempts} with ID:`, sessionId);
+  
+  const server = createMCPServer();
+  const session = { server, lastActivity: new Date() };
+  sessions.set(sessionId, session);
+
+  // Send initial connection event
+  res.write(`data: ${JSON.stringify({
+    jsonrpc: '2.0',
+    method: 'notifications/initialized',
+    params: {
+      protocolVersion: '2025-06-18',
+      capabilities: {
+        tools: { listChanged: true },
+        resources: { subscribe: false, listChanged: true },
+        prompts: { listChanged: true }
+      },
+      serverInfo: {
+        name: 'gong-mcp-server',
+        version: '0.1.0'
+      }
+    }
+  })}\n\n`);
+
+  // Send available tools
+  res.write(`data: ${JSON.stringify({
+    jsonrpc: '2.0',
+    method: 'tools/list',
+    params: {},
+    result: {
+      tools: [LIST_CALLS_TOOL, RETRIEVE_TRANSCRIPTS_TOOL]
+    }
+  })}\n\n`);
+
+  // Send available prompts
+  res.write(`data: ${JSON.stringify({
+    jsonrpc: '2.0',
+    method: 'prompts/list',
+    params: {},
+    result: {
+      prompts: [ANALYZE_CALLS_PROMPT, SUMMARIZE_TRANSCRIPT_PROMPT]
+    }
+  })}\n\n`);
+
+  // Send available resources
+  res.write(`data: ${JSON.stringify({
+    jsonrpc: '2.0',
+    method: 'resources/list',
+    params: {},
+    result: {
+      resources: [GONG_CALL_RESOURCE]
+    }
+  })}\n\n`);
+
+  // Keep connection alive
+  const keepAlive = setInterval(() => {
+    res.write(`data: ${JSON.stringify({
+      jsonrpc: '2.0',
+      method: 'ping',
+      params: {}
+    })}\n\n`);
+  }, 30000);
+
+  // Clean up on disconnect
+  req.on('close', () => {
+    console.error('SSE connection closed:', sessionId);
+    clearInterval(keepAlive);
+    sessions.delete(sessionId);
+  });
+
+  req.on('error', () => {
+    console.error('SSE connection error:', sessionId);
+    clearInterval(keepAlive);
+    sessions.delete(sessionId);
   });
 }
 
