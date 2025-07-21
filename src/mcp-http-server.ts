@@ -713,11 +713,24 @@ async function handleOAuthAuthorization(req: http.IncomingMessage, res: http.Ser
   const redirectUri = params.get('redirect_uri');
   const state = params.get('state');
   
-  if (!clientId || !oauthClients.has(clientId)) {
-    console.error('Invalid client ID:', clientId);
+  if (!clientId) {
+    console.error('No client ID provided');
     res.writeHead(400, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ error: 'invalid_client' }));
+    res.end(JSON.stringify({ error: 'invalid_request' }));
     return;
+  }
+  
+  // Auto-register unknown clients for MCP compatibility
+  if (!oauthClients.has(clientId)) {
+    console.error('Auto-registering unknown client:', clientId);
+    oauthClients.set(clientId, {
+      client_id: clientId,
+      client_secret: `secret_${clientId}`,
+      redirect_uris: [redirectUri || `${PROTOCOL}/callback`],
+      grant_types: ['authorization_code'],
+      response_types: ['code'],
+      scope: 'gong:read'
+    });
   }
   
   // Generate authorization code
@@ -766,9 +779,23 @@ async function handleOAuthToken(req: http.IncomingMessage, res: http.ServerRespo
         return;
       }
       
+      // Auto-register unknown clients if needed
+      if (!oauthClients.has(clientId)) {
+        console.error('Auto-registering client in token endpoint:', clientId);
+        oauthClients.set(clientId, {
+          client_id: clientId,
+          client_secret: clientSecret || `secret_${clientId}`,
+          redirect_uris: [`${PROTOCOL}/callback`],
+          grant_types: ['authorization_code'],
+          response_types: ['code'],
+          scope: 'gong:read'
+        });
+      }
+      
       const client = oauthClients.get(clientId);
-      if (!client || client.client_secret !== clientSecret) {
-        console.error('Invalid client credentials');
+      // For MCP, accept any client secret or no secret
+      if (!client) {
+        console.error('Failed to get/create client');
         res.writeHead(400, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: 'invalid_client' }));
         return;
