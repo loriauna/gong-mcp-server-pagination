@@ -389,7 +389,12 @@ async function createHTTPMCPServer() {
         grant_types_supported: ['authorization_code'],
         token_endpoint_auth_methods_supported: ['client_secret_basic', 'client_secret_post'],
         scopes_supported: ['gong:read'],
-        code_challenge_methods_supported: ['S256']
+        code_challenge_methods_supported: ['S256'],
+        // MCP-specific extensions
+        mcp_endpoint: `${PROTOCOL}/mcp`,
+        mcp_protocol_version: '2024-11-05',
+        mcp_capabilities: ['tools'],
+        mcp_transport: 'http'
       }));
       return;
     }
@@ -400,7 +405,12 @@ async function createHTTPMCPServer() {
         resource_server: PROTOCOL,
         authorization_servers: [PROTOCOL],
         scopes_supported: ['gong:read'],
-        bearer_methods_supported: ['header', 'query']
+        bearer_methods_supported: ['header', 'query'],
+        // MCP-specific extensions
+        mcp_endpoint: `${PROTOCOL}/mcp`,
+        mcp_protocol_version: '2024-11-05',
+        mcp_capabilities: ['tools'],
+        mcp_transport: 'http'
       }));
       return;
     }
@@ -422,6 +432,7 @@ async function createHTTPMCPServer() {
 
     // MCP endpoint
     if (path === '/mcp') {
+      console.error('MCP endpoint accessed:', req.method, req.headers);
       await handleMCPRequest(req, res);
       return;
     }
@@ -440,6 +451,13 @@ async function createHTTPMCPServer() {
         register: '/register',
         authorize: '/authorize',
         token: '/token'
+      },
+      mcp: {
+        endpoint: '/mcp',
+        protocol_version: '2024-11-05',
+        transport: 'http',
+        capabilities: ['tools'],
+        tools_available: ['list_calls', 'retrieve_transcripts']
       }
     }));
   });
