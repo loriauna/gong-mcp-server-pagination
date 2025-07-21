@@ -434,7 +434,7 @@ async function createHTTPMCPServer() {
       res.end(JSON.stringify({
         type: 'mcp-server',
         version: '0.1.0',
-        protocol_version: '2024-11-05',
+        protocol_version: '2025-06-18',
         name: 'Gong MCP Server',
         description: 'Access Gong call data through MCP',
         vendor: 'gong-mcp',
@@ -594,7 +594,7 @@ async function createHTTPMCPServer() {
       },
       mcp: {
         endpoint: '/mcp',
-        protocol_version: '2024-11-05',
+        protocol_version: '2025-06-18',
         transport: 'http',
         capabilities: ['tools', 'resources', 'prompts'],
         tools_available: ['list_calls', 'retrieve_transcripts']
@@ -712,7 +712,7 @@ async function handleMCPRequest(req: http.IncomingMessage, res: http.ServerRespo
               jsonrpc: '2.0',
               id: request.id,
               result: {
-                protocolVersion: '2024-11-05',
+                protocolVersion: '2025-06-18',
                 capabilities: {
                   tools: {
                     listChanged: true
@@ -755,7 +755,7 @@ async function handleMCPRequest(req: http.IncomingMessage, res: http.ServerRespo
           console.error('MCP JSON-RPC response:', JSON.stringify(response, null, 2));
           res.writeHead(200, { 
             'Content-Type': 'application/json',
-            'X-MCP-Version': '2024-11-05',
+            'X-MCP-Version': '2025-06-18',
             'X-MCP-Implementation': 'gong-mcp-server'
           });
           res.end(JSON.stringify(response));
