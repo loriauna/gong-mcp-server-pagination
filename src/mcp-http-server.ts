@@ -309,7 +309,8 @@ function handleToolsList(request: any) {
     jsonrpc: '2.0',
     id: request.id,
     result: {
-      tools: [LIST_CALLS_TOOL, RETRIEVE_TRANSCRIPTS_TOOL]
+      tools: [LIST_CALLS_TOOL, RETRIEVE_TRANSCRIPTS_TOOL],
+      nextCursor: null // No pagination for now
     }
   };
 }
@@ -455,7 +456,7 @@ async function handleToolCall(request: any) {
               type: "text", 
               text: JSON.stringify(response, null, 2)
             }],
-            isError: false,
+            isError: false
           }
         };
       }
@@ -474,7 +475,7 @@ async function handleToolCall(request: any) {
               type: "text", 
               text: JSON.stringify(response, null, 2)
             }],
-            isError: false,
+            isError: false
           }
         };
       }
@@ -533,7 +534,11 @@ async function createHTTPMCPServer() {
   const mcpHandlers = createMCPHandlers();
   
   const httpServer = http.createServer(async (req, res) => {
-    console.error(`Request: ${req.method} ${req.url}`);
+    console.error(`\n=== INCOMING REQUEST ===`);
+    console.error(`${req.method} ${req.url}`);
+    console.error('Headers:', JSON.stringify(req.headers, null, 2));
+    console.error('User-Agent:', req.headers['user-agent']);
+    console.error('========================\n');
     
     // CORS headers
     res.setHeader('Access-Control-Allow-Origin', '*');
@@ -541,6 +546,7 @@ async function createHTTPMCPServer() {
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, Accept, Mcp-Session-Id');
     
     if (req.method === 'OPTIONS') {
+      console.error('CORS preflight request handled');
       res.writeHead(200);
       res.end();
       return;
@@ -670,7 +676,7 @@ async function createHTTPMCPServer() {
     }
 
     // MCP endpoints (try multiple paths)
-    if (path === '/mcp' || path === '/api/mcp' || path === '/rpc' || path === '/jsonrpc') {
+    if (path === '/mcp' || path === '/api/mcp' || path === '/rpc' || path === '/jsonrpc' || path === '/claude' || path === '/v1/mcp') {
       console.error(`MCP endpoint accessed at ${path}:`, req.method, req.headers);
       await handleMCPRequest(req, res);
       return;
@@ -1100,35 +1106,9 @@ async function handleSSEConnection(req: http.IncomingMessage, res: http.ServerRe
     }
   })}\n\n`);
 
-  // Send available tools
-  res.write(`data: ${JSON.stringify({
-    jsonrpc: '2.0',
-    method: 'tools/list',
-    params: {},
-    result: {
-      tools: [LIST_CALLS_TOOL, RETRIEVE_TRANSCRIPTS_TOOL]
-    }
-  })}\n\n`);
-
-  // Send available prompts
-  res.write(`data: ${JSON.stringify({
-    jsonrpc: '2.0',
-    method: 'prompts/list',
-    params: {},
-    result: {
-      prompts: [ANALYZE_CALLS_PROMPT, SUMMARIZE_TRANSCRIPT_PROMPT]
-    }
-  })}\n\n`);
-
-  // Send available resources
-  res.write(`data: ${JSON.stringify({
-    jsonrpc: '2.0',
-    method: 'resources/list',
-    params: {},
-    result: {
-      resources: [GONG_CALL_RESOURCE]
-    }
-  })}\n\n`);
+  // Note: Don't proactively send tools/prompts/resources via SSE
+  // Let the client request them via JSON-RPC instead
+  console.error('SSE connection established, waiting for client requests...');
 
   // Keep connection alive
   const keepAlive = setInterval(() => {
