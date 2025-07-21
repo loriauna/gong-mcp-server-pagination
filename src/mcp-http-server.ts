@@ -1,11 +1,13 @@
 #!/usr/bin/env node
 
-import { Server } from "@modelcontextprotocol/sdk/server/index.js";
-import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import {
-  CallToolRequestSchema,
-  ListToolsRequestSchema,
   Tool,
+  ListToolsRequestSchema,
+  CallToolRequestSchema,
+  ListResourcesRequestSchema,
+  ReadResourceRequestSchema,
+  ListPromptsRequestSchema,
+  GetPromptRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
 import axios from 'axios';
 import dotenv from 'dotenv';
@@ -25,8 +27,8 @@ const GONG_API_URL = 'https://api.gong.io/v2';
 const GONG_ACCESS_KEY = process.env.GONG_ACCESS_KEY;
 const GONG_ACCESS_SECRET = process.env.GONG_ACCESS_SECRET;
 
-// Session management
-const sessions = new Map<string, { server: Server; lastActivity: Date }>();
+// Session management for MCP connections
+const activeSessions = new Map<string, { lastActivity: Date; initialized: boolean }>();
 const SESSION_TIMEOUT = 30 * 60 * 1000; // 30 minutes
 
 // OAuth storage (simple in-memory for now)
@@ -280,122 +282,242 @@ const RETRIEVE_TRANSCRIPTS_TOOL: Tool = {
   }
 };
 
-// Create MCP Server
-function createMCPServer(): Server {
-  const server = new Server(
-    {
-      name: "gong-mcp-server",
-      version: "0.1.0",
-    },
-    {
+// MCP Protocol Handler Functions
+function handleInitialize(request: any) {
+  console.error('🎉 Handling initialize request');
+  return {
+    jsonrpc: '2.0',
+    id: request.id,
+    result: {
+      protocolVersion: '2025-06-18',
       capabilities: {
-        tools: {
-          listChanged: true
-        },
-        resources: {
-          subscribe: false,
-          listChanged: true
-        },
-        prompts: {
-          listChanged: true
-        }
+        tools: { listChanged: true },
+        resources: { subscribe: false, listChanged: true },
+        prompts: { listChanged: true }
       },
-    },
-  );
-
-  // Type guards
-  function isGongListCallsArgs(args: unknown): args is GongListCallsArgs {
-    return (
-      typeof args === "object" &&
-      args !== null &&
-      (!("fromDateTime" in args) || typeof (args as GongListCallsArgs).fromDateTime === "string") &&
-      (!("toDateTime" in args) || typeof (args as GongListCallsArgs).toDateTime === "string") &&
-      (!("cursor" in args) || typeof (args as GongListCallsArgs).cursor === "string") &&
-      (!("limit" in args) || typeof (args as GongListCallsArgs).limit === "number")
-    );
-  }
-
-  function isGongRetrieveTranscriptsArgs(args: unknown): args is GongRetrieveTranscriptsArgs {
-    return (
-      typeof args === "object" &&
-      args !== null &&
-      "callIds" in args &&
-      Array.isArray((args as GongRetrieveTranscriptsArgs).callIds) &&
-      (args as GongRetrieveTranscriptsArgs).callIds.every(id => typeof id === "string") &&
-      (!("cursor" in args) || typeof (args as GongRetrieveTranscriptsArgs).cursor === "string") &&
-      (!("limit" in args) || typeof (args as GongRetrieveTranscriptsArgs).limit === "number")
-    );
-  }
-
-  // Tool handlers
-  server.setRequestHandler(ListToolsRequestSchema, async () => ({
-    tools: [LIST_CALLS_TOOL, RETRIEVE_TRANSCRIPTS_TOOL],
-  }));
-
-  server.setRequestHandler(CallToolRequestSchema, async (request: { params: { name: string; arguments?: unknown } }) => {
-    try {
-      const { name, arguments: args } = request.params;
-
-      if (!gongClient) {
-        throw new Error("Gong API credentials not configured");
+      serverInfo: {
+        name: 'gong-mcp-server',
+        version: '0.1.0'
       }
-
-      if (!args) {
-        throw new Error("No arguments provided");
-      }
-
-      switch (name) {
-        case "list_calls": {
-          if (!isGongListCallsArgs(args)) {
-            throw new Error("Invalid arguments for list_calls");
-          }
-          const { fromDateTime, toDateTime, cursor, limit } = args;
-          const response = await gongClient.listCalls(fromDateTime, toDateTime, cursor, limit);
-          return {
-            content: [{ 
-              type: "text", 
-              text: JSON.stringify(response, null, 2)
-            }],
-            isError: false,
-          };
-        }
-
-        case "retrieve_transcripts": {
-          if (!isGongRetrieveTranscriptsArgs(args)) {
-            throw new Error("Invalid arguments for retrieve_transcripts");
-          }
-          const { callIds, cursor, limit } = args;
-          const response = await gongClient.retrieveTranscripts(callIds, cursor, limit);
-          return {
-            content: [{ 
-              type: "text", 
-              text: JSON.stringify(response, null, 2)
-            }],
-            isError: false,
-          };
-        }
-
-        default:
-          return {
-            content: [{ type: "text", text: `Unknown tool: ${name}` }],
-            isError: true,
-          };
-      }
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      return {
-        content: [
-          {
-            type: "text",
-            text: `Error occurred while making the request. Please try again. Error details: ${errorMessage}`,
-          },
-        ],
-        isError: true,
-      };
     }
-  });
+  };
+}
 
-  return server;
+function handleToolsList(request: any) {
+  console.error('🔧 Handling tools/list request');
+  return {
+    jsonrpc: '2.0',
+    id: request.id,
+    result: {
+      tools: [LIST_CALLS_TOOL, RETRIEVE_TRANSCRIPTS_TOOL]
+    }
+  };
+}
+
+function handleResourcesList(request: any) {
+  console.error('📚 Handling resources/list request');
+  return {
+    jsonrpc: '2.0',
+    id: request.id,
+    result: {
+      resources: [GONG_CALL_RESOURCE]
+    }
+  };
+}
+
+function handleResourceRead(request: any) {
+  console.error('📖 Handling resource read request');
+  return {
+    jsonrpc: '2.0',
+    id: request.id,
+    result: {
+      contents: [{
+        uri: request.params.uri,
+        mimeType: 'application/json',
+        text: JSON.stringify({
+          message: 'Gong resource access',
+          uri: request.params.uri,
+          available_calls: 'Use list_calls tool to retrieve'
+        })
+      }]
+    }
+  };
+}
+
+function handlePromptsList(request: any) {
+  console.error('💭 Handling prompts/list request');
+  return {
+    jsonrpc: '2.0',
+    id: request.id,
+    result: {
+      prompts: [ANALYZE_CALLS_PROMPT, SUMMARIZE_TRANSCRIPT_PROMPT]
+    }
+  };
+}
+
+function handlePromptGet(request: any) {
+  console.error('📝 Handling prompt get request');
+  const promptName = request.params?.name;
+  let prompt = null;
+  
+  if (promptName === 'analyze_calls') {
+    prompt = ANALYZE_CALLS_PROMPT;
+  } else if (promptName === 'summarize_transcript') {
+    prompt = SUMMARIZE_TRANSCRIPT_PROMPT;
+  }
+  
+  if (!prompt) {
+    return {
+      jsonrpc: '2.0',
+      id: request.id,
+      error: { code: -32602, message: 'Prompt not found' }
+    };
+  }
+  
+  return {
+    jsonrpc: '2.0',
+    id: request.id,
+    result: {
+      description: prompt.description,
+      messages: [{
+        role: 'user',
+        content: {
+          type: 'text',
+          text: `Execute ${prompt.name}: ${prompt.description}`
+        }
+      }]
+    }
+  };
+}
+
+function handleInitialized(request: any) {
+  console.error('✅ Handling initialized notification - no response needed');
+  return null; // Notifications don't need responses
+}
+
+function handlePing(request: any) {
+  return {
+    jsonrpc: '2.0',
+    id: request.id,
+    result: {}
+  };
+}
+
+async function handleToolCall(request: any) {
+  console.error('🛠️ Handling tool call:', request.params?.name);
+  try {
+    const { name, arguments: args } = request.params;
+
+    if (!gongClient) {
+      throw new Error("Gong API credentials not configured");
+    }
+
+    if (!args) {
+      throw new Error("No arguments provided");
+    }
+
+    // Type guards
+    function isGongListCallsArgs(args: unknown): args is GongListCallsArgs {
+      return (
+        typeof args === "object" &&
+        args !== null &&
+        (!("fromDateTime" in args) || typeof (args as GongListCallsArgs).fromDateTime === "string") &&
+        (!("toDateTime" in args) || typeof (args as GongListCallsArgs).toDateTime === "string") &&
+        (!("cursor" in args) || typeof (args as GongListCallsArgs).cursor === "string") &&
+        (!("limit" in args) || typeof (args as GongListCallsArgs).limit === "number")
+      );
+    }
+
+    function isGongRetrieveTranscriptsArgs(args: unknown): args is GongRetrieveTranscriptsArgs {
+      return (
+        typeof args === "object" &&
+        args !== null &&
+        "callIds" in args &&
+        Array.isArray((args as GongRetrieveTranscriptsArgs).callIds) &&
+        (args as GongRetrieveTranscriptsArgs).callIds.every(id => typeof id === "string") &&
+        (!("cursor" in args) || typeof (args as GongRetrieveTranscriptsArgs).cursor === "string") &&
+        (!("limit" in args) || typeof (args as GongRetrieveTranscriptsArgs).limit === "number")
+      );
+    }
+
+    switch (name) {
+      case "list_calls": {
+        if (!isGongListCallsArgs(args)) {
+          throw new Error("Invalid arguments for list_calls");
+        }
+        const { fromDateTime, toDateTime, cursor, limit } = args;
+        const response = await gongClient.listCalls(fromDateTime, toDateTime, cursor, limit);
+        return {
+          jsonrpc: '2.0',
+          id: request.id,
+          result: {
+            content: [{ 
+              type: "text", 
+              text: JSON.stringify(response, null, 2)
+            }],
+            isError: false,
+          }
+        };
+      }
+
+      case "retrieve_transcripts": {
+        if (!isGongRetrieveTranscriptsArgs(args)) {
+          throw new Error("Invalid arguments for retrieve_transcripts");
+        }
+        const { callIds, cursor, limit } = args;
+        const response = await gongClient.retrieveTranscripts(callIds, cursor, limit);
+        return {
+          jsonrpc: '2.0',
+          id: request.id,
+          result: {
+            content: [{ 
+              type: "text", 
+              text: JSON.stringify(response, null, 2)
+            }],
+            isError: false,
+          }
+        };
+      }
+
+      default:
+        return {
+          jsonrpc: '2.0',
+          id: request.id,
+          error: {
+            code: -32601,
+            message: `Unknown tool: ${name}`
+          }
+        };
+    }
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    return {
+      jsonrpc: '2.0',
+      id: request.id,
+      error: {
+        code: -32603,
+        message: `Error occurred while making the request: ${errorMessage}`
+      }
+    };
+  }
+}
+
+// MCP Request/Response handlers
+function createMCPHandlers() {
+  // MCP Protocol handlers
+  const handlers = {
+    'initialize': handleInitialize,
+    'tools/list': handleToolsList,
+    'tools/call': handleToolCall,
+    'resources/list': handleResourcesList,
+    'resources/read': handleResourceRead,
+    'prompts/list': handlePromptsList,
+    'prompts/get': handlePromptGet,
+    'notifications/initialized': handleInitialized,
+    'ping': handlePing
+  };
+
+  return handlers;
 }
 
 // HTTP MCP Transport Implementation
@@ -403,14 +525,13 @@ async function createHTTPMCPServer() {
   const PORT = process.env.PORT;
   
   if (!PORT) {
-    // Running locally - use stdio transport
-    const server = createMCPServer();
-    const transport = new StdioServerTransport();
-    await server.connect(transport);
-    return;
+    console.error('No PORT environment variable set - cannot start HTTP server');
+    process.exit(1);
   }
 
   // HTTP server for MCP transport
+  const mcpHandlers = createMCPHandlers();
+  
   const httpServer = http.createServer(async (req, res) => {
     console.error(`Request: ${req.method} ${req.url}`);
     
@@ -615,9 +736,9 @@ async function createHTTPMCPServer() {
   // Clean up expired sessions
   setInterval(() => {
     const now = new Date();
-    for (const [sessionId, session] of sessions.entries()) {
+    for (const [sessionId, session] of activeSessions.entries()) {
       if (now.getTime() - session.lastActivity.getTime() > SESSION_TIMEOUT) {
-        sessions.delete(sessionId);
+        activeSessions.delete(sessionId);
       }
     }
   }, 5 * 60 * 1000); // Every 5 minutes
@@ -643,20 +764,21 @@ async function handleMCPRequest(req: http.IncomingMessage, res: http.ServerRespo
     
     // Get or create session
     const sessionId = req.headers['mcp-session-id'] as string || randomUUID();
-    let session = sessions.get(sessionId);
+    let session = activeSessions.get(sessionId);
     
     if (!session) {
       connectionAttempts++;
       console.error(`Creating new MCP session #${connectionAttempts} with ID:`, sessionId);
-      const server = createMCPServer();
-      session = { server, lastActivity: new Date() };
-      sessions.set(sessionId, session);
+      session = { lastActivity: new Date(), initialized: false };
+      activeSessions.set(sessionId, session);
     } else {
       console.error('Using existing session:', sessionId);
     }
     
     session.lastActivity = new Date();
     res.setHeader('Mcp-Session-Id', sessionId);
+
+    const mcpHandlers = createMCPHandlers();
 
     if (req.method === 'POST') {
       console.error('Handling POST request - expecting JSON-RPC');
@@ -668,90 +790,43 @@ async function handleMCPRequest(req: http.IncomingMessage, res: http.ServerRespo
           const request = JSON.parse(body);
           console.error('MCP JSON-RPC request:', JSON.stringify(request, null, 2));
           console.error('Request method:', request.method);
-          console.error('Has ID:', !!request.id);
+          console.error('Request ID:', request.id);
+          console.error('Has ID field:', 'id' in request);
           
           if (request.method === 'initialize') {
             console.error('🎉 INITIALIZE method called - MCP handshake starting!');
           } else if (request.method === 'tools/list') {
-            console.error('🔧 TOOLS/LIST called');
+            console.error('🔧 TOOLS/LIST called - this should show our tools!');
             console.error('Session initialized?', !!session);
           } else if (request.method === 'prompts/list') {
             console.error('💭 PROMPTS/LIST called');
           } else if (request.method === 'resources/list') {
             console.error('📚 RESOURCES/LIST called');
+          } else if (request.method === 'notifications/initialized') {
+            console.error('✅ INITIALIZED notification - handshake complete!');
           } else {
-            console.error('❓ Other method:', request.method);
+            console.error('❓ Other method:', request.method, '- this might be why tools dont show');
           }
           
-          // Handle the request based on JSON-RPC method
+          // Handle the request using our handlers
+          const handler = mcpHandlers[request.method as keyof typeof mcpHandlers];
           let response;
           
-          if (request.method === 'tools/list') {
-            response = {
-              jsonrpc: '2.0',
-              id: request.id,
-              result: {
-                tools: [LIST_CALLS_TOOL, RETRIEVE_TRANSCRIPTS_TOOL]
-              }
-            };
-          } else if (request.method === 'resources/list') {
-            response = {
-              jsonrpc: '2.0',
-              id: request.id,
-              result: {
-                resources: [GONG_CALL_RESOURCE]
-              }
-            };
-          } else if (request.method === 'prompts/list') {
-            response = {
-              jsonrpc: '2.0',
-              id: request.id,
-              result: {
-                prompts: [ANALYZE_CALLS_PROMPT, SUMMARIZE_TRANSCRIPT_PROMPT]
-              }
-            };
-          } else if (request.method === 'tools/call') {
-            const result = await handleToolCall(request.params);
-            response = {
-              jsonrpc: '2.0',
-              id: request.id,
-              result
-            };
-          } else if (request.method === 'initialize') {
-            response = {
-              jsonrpc: '2.0',
-              id: request.id,
-              result: {
-                protocolVersion: '2025-06-18',
-                capabilities: {
-                  tools: {
-                    listChanged: true
-                  },
-                  resources: {
-                    subscribe: false,
-                    listChanged: true
-                  },
-                  prompts: {
-                    listChanged: true
-                  }
-                },
-                serverInfo: {
-                  name: 'gong-mcp-server',
-                  version: '0.1.0'
-                }
-              }
-            };
-          } else if (request.method === 'notifications/initialized') {
-            // Handle initialized notification - no response needed
-            console.error('MCP initialized notification received');
-            return;
-          } else if (request.method === 'ping') {
-            response = {
-              jsonrpc: '2.0',
-              id: request.id,
-              result: {}
-            };
+          if (handler) {
+            if (request.method === 'initialize') {
+              session.initialized = true;
+            }
+            response = await handler(request);
+            
+            // Skip response for notifications
+            if (response === null) {
+              console.error('No response needed for notification:', request.method);
+              res.writeHead(200);
+              res.end();
+              return;
+            }
           } else {
+            console.error('❌ Unknown method:', request.method);
             response = {
               jsonrpc: '2.0',
               id: request.id,
@@ -821,94 +896,6 @@ async function handleMCPRequest(req: http.IncomingMessage, res: http.ServerRespo
     console.error('Error handling MCP request:', error);
     res.writeHead(500, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ error: 'Internal server error' }));
-  }
-}
-
-// Handle tool calls
-async function handleToolCall(params: { name: string; arguments?: unknown }) {
-  try {
-    const { name, arguments: args } = params;
-
-    if (!gongClient) {
-      throw new Error("Gong API credentials not configured");
-    }
-
-    if (!args) {
-      throw new Error("No arguments provided");
-    }
-
-    // Type guards
-    function isGongListCallsArgs(args: unknown): args is GongListCallsArgs {
-      return (
-        typeof args === "object" &&
-        args !== null &&
-        (!("fromDateTime" in args) || typeof (args as GongListCallsArgs).fromDateTime === "string") &&
-        (!("toDateTime" in args) || typeof (args as GongListCallsArgs).toDateTime === "string") &&
-        (!("cursor" in args) || typeof (args as GongListCallsArgs).cursor === "string") &&
-        (!("limit" in args) || typeof (args as GongListCallsArgs).limit === "number")
-      );
-    }
-
-    function isGongRetrieveTranscriptsArgs(args: unknown): args is GongRetrieveTranscriptsArgs {
-      return (
-        typeof args === "object" &&
-        args !== null &&
-        "callIds" in args &&
-        Array.isArray((args as GongRetrieveTranscriptsArgs).callIds) &&
-        (args as GongRetrieveTranscriptsArgs).callIds.every(id => typeof id === "string") &&
-        (!("cursor" in args) || typeof (args as GongRetrieveTranscriptsArgs).cursor === "string") &&
-        (!("limit" in args) || typeof (args as GongRetrieveTranscriptsArgs).limit === "number")
-      );
-    }
-
-    switch (name) {
-      case "list_calls": {
-        if (!isGongListCallsArgs(args)) {
-          throw new Error("Invalid arguments for list_calls");
-        }
-        const { fromDateTime, toDateTime, cursor, limit } = args;
-        const response = await gongClient.listCalls(fromDateTime, toDateTime, cursor, limit);
-        return {
-          content: [{ 
-            type: "text", 
-            text: JSON.stringify(response, null, 2)
-          }],
-          isError: false,
-        };
-      }
-
-      case "retrieve_transcripts": {
-        if (!isGongRetrieveTranscriptsArgs(args)) {
-          throw new Error("Invalid arguments for retrieve_transcripts");
-        }
-        const { callIds, cursor, limit } = args;
-        const response = await gongClient.retrieveTranscripts(callIds, cursor, limit);
-        return {
-          content: [{ 
-            type: "text", 
-            text: JSON.stringify(response, null, 2)
-          }],
-          isError: false,
-        };
-      }
-
-      default:
-        return {
-          content: [{ type: "text", text: `Unknown tool: ${name}` }],
-          isError: true,
-        };
-    }
-  } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : String(error);
-    return {
-      content: [
-        {
-          type: "text",
-          text: `Error occurred while making the request. Please try again. Error details: ${errorMessage}`,
-        },
-      ],
-      isError: true,
-    };
   }
 }
 
@@ -1092,9 +1079,8 @@ async function handleSSEConnection(req: http.IncomingMessage, res: http.ServerRe
   connectionAttempts++;
   console.error(`Creating SSE session #${connectionAttempts} with ID:`, sessionId);
   
-  const server = createMCPServer();
-  const session = { server, lastActivity: new Date() };
-  sessions.set(sessionId, session);
+  const session = { lastActivity: new Date(), initialized: true };
+  activeSessions.set(sessionId, session);
 
   // Send initial connection event
   res.write(`data: ${JSON.stringify({
@@ -1157,13 +1143,13 @@ async function handleSSEConnection(req: http.IncomingMessage, res: http.ServerRe
   req.on('close', () => {
     console.error('SSE connection closed:', sessionId);
     clearInterval(keepAlive);
-    sessions.delete(sessionId);
+    activeSessions.delete(sessionId);
   });
 
   req.on('error', () => {
     console.error('SSE connection error:', sessionId);
     clearInterval(keepAlive);
-    sessions.delete(sessionId);
+    activeSessions.delete(sessionId);
   });
 }
 
