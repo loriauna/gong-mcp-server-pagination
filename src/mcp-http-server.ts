@@ -708,6 +708,122 @@ async function createHTTPMCPServer() {
       return;
     }
 
+    // Debug page to test MCP functionality
+    if (path === '/debug' && req.method === 'GET') {
+      res.writeHead(200, { 'Content-Type': 'text/html' });
+      res.end(`
+<!DOCTYPE html>
+<html>
+<head>
+  <title>MCP Server Debug</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 20px; }
+    .test-section { margin: 20px 0; padding: 15px; border: 1px solid #ccc; }
+    button { padding: 10px; margin: 5px; }
+    pre { background: #f5f5f5; padding: 10px; overflow-x: auto; }
+  </style>
+</head>
+<body>
+  <h1>MCP Server Debug Interface</h1>
+  
+  <div class="test-section">
+    <h3>Test Initialize</h3>
+    <button onclick="testInitialize()">Test Initialize</button>
+    <pre id="initResult"></pre>
+  </div>
+
+  <div class="test-section">
+    <h3>Test Tools List</h3>
+    <button onclick="testToolsList()">Test Tools/List</button>
+    <pre id="toolsResult"></pre>
+  </div>
+
+  <div class="test-section">
+    <h3>Test SSE Connection</h3>
+    <button onclick="testSSE()">Connect to SSE</button>
+    <button onclick="stopSSE()">Stop SSE</button>
+    <pre id="sseResult"></pre>
+  </div>
+
+  <script>
+    let eventSource = null;
+
+    async function testInitialize() {
+      try {
+        const response = await fetch('/mcp', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            jsonrpc: '2.0',
+            id: 1,
+            method: 'initialize',
+            params: {
+              protocolVersion: '2025-06-18',
+              capabilities: { roots: { listChanged: true }, sampling: {} },
+              clientInfo: { name: 'debug-client', version: '1.0' }
+            }
+          })
+        });
+        const result = await response.json();
+        document.getElementById('initResult').textContent = JSON.stringify(result, null, 2);
+      } catch (error) {
+        document.getElementById('initResult').textContent = 'Error: ' + error.message;
+      }
+    }
+
+    async function testToolsList() {
+      try {
+        const response = await fetch('/mcp', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            jsonrpc: '2.0',
+            id: 2,
+            method: 'tools/list',
+            params: {}
+          })
+        });
+        const result = await response.json();
+        document.getElementById('toolsResult').textContent = JSON.stringify(result, null, 2);
+      } catch (error) {
+        document.getElementById('toolsResult').textContent = 'Error: ' + error.message;
+      }
+    }
+
+    function testSSE() {
+      if (eventSource) stopSSE();
+      
+      eventSource = new EventSource('/sse');
+      const resultDiv = document.getElementById('sseResult');
+      resultDiv.textContent = 'Connecting to SSE...\\n';
+      
+      eventSource.onopen = function() {
+        resultDiv.textContent += 'SSE Connected!\\n';
+      };
+      
+      eventSource.onmessage = function(event) {
+        resultDiv.textContent += 'Data: ' + event.data + '\\n';
+      };
+      
+      eventSource.onerror = function(error) {
+        resultDiv.textContent += 'SSE Error: ' + JSON.stringify(error) + '\\n';
+      };
+    }
+
+    function stopSSE() {
+      if (eventSource) {
+        eventSource.close();
+        eventSource = null;
+        document.getElementById('sseResult').textContent += 'SSE Disconnected.\\n';
+      }
+    }
+  </script>
+</body>
+</html>
+      `);
+      return;
+    }
+
     // Default response
     res.writeHead(200, { 
       'Content-Type': 'application/json',
