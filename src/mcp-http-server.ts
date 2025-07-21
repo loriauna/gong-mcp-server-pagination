@@ -29,6 +29,12 @@ const GONG_ACCESS_SECRET = process.env.GONG_ACCESS_SECRET;
 const sessions = new Map<string, { server: Server; lastActivity: Date }>();
 const SESSION_TIMEOUT = 30 * 60 * 1000; // 30 minutes
 
+// OAuth storage (simple in-memory for now)
+const oauthClients = new Map();
+const oauthTokens = new Map();
+const BASE_URL = process.env.RAILWAY_STATIC_URL || `https://gong-mcp-server-pagination-production.up.railway.app`;
+const PROTOCOL = BASE_URL.startsWith('http') ? BASE_URL : `https://${BASE_URL}`;
+
 // Type definitions
 interface GongCall {
   id: string;
@@ -343,6 +349,8 @@ async function createHTTPMCPServer() {
 
   // HTTP server for MCP transport
   const httpServer = http.createServer(async (req, res) => {
+    console.error(`Request: ${req.method} ${req.url}`);
+    
     // CORS headers
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
@@ -354,15 +362,66 @@ async function createHTTPMCPServer() {
       return;
     }
 
+    const url = new URL(req.url || '', `http://localhost:${PORT}`);
+    const path = url.pathname;
+
     // Health check endpoint
-    if (req.url === '/health') {
+    if (path === '/health') {
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ status: 'healthy', timestamp: new Date().toISOString() }));
+      res.end(JSON.stringify({ 
+        status: 'healthy', 
+        timestamp: new Date().toISOString(),
+        type: 'mcp-server',
+        capabilities: ['oauth', 'mcp']
+      }));
+      return;
+    }
+
+    // OAuth endpoints
+    if (path === '/.well-known/oauth-authorization-server') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        issuer: PROTOCOL,
+        authorization_endpoint: `${PROTOCOL}/authorize`,
+        token_endpoint: `${PROTOCOL}/token`,
+        registration_endpoint: `${PROTOCOL}/register`,
+        response_types_supported: ['code'],
+        grant_types_supported: ['authorization_code'],
+        token_endpoint_auth_methods_supported: ['client_secret_basic', 'client_secret_post'],
+        scopes_supported: ['gong:read'],
+        code_challenge_methods_supported: ['S256']
+      }));
+      return;
+    }
+
+    if (path === '/.well-known/oauth-protected-resource') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        resource_server: PROTOCOL,
+        authorization_servers: [PROTOCOL],
+        scopes_supported: ['gong:read'],
+        bearer_methods_supported: ['header', 'query']
+      }));
+      return;
+    }
+
+    if (path === '/register' && req.method === 'POST') {
+      await handleOAuthRegistration(req, res);
+      return;
+    }
+
+    if (path === '/authorize' && req.method === 'GET') {
+      await handleOAuthAuthorization(req, res, url);
+      return;
+    }
+
+    if (path === '/token' && req.method === 'POST') {
+      await handleOAuthToken(req, res);
       return;
     }
 
     // MCP endpoint
-    if (req.url === '/mcp') {
+    if (path === '/mcp') {
       await handleMCPRequest(req, res);
       return;
     }
@@ -372,10 +431,15 @@ async function createHTTPMCPServer() {
     res.end(JSON.stringify({ 
       name: 'Gong MCP Server', 
       version: '0.1.0',
-      description: 'MCP server for Gong API with pagination support',
+      description: 'MCP server for Gong API with OAuth support',
       endpoints: {
         health: '/health',
-        mcp: '/mcp'
+        mcp: '/mcp',
+        oauth_metadata: '/.well-known/oauth-authorization-server',
+        protected_resource: '/.well-known/oauth-protected-resource',
+        register: '/register',
+        authorize: '/authorize',
+        token: '/token'
       }
     }));
   });
@@ -604,6 +668,137 @@ async function handleToolCall(params: { name: string; arguments?: unknown }) {
       isError: true,
     };
   }
+}
+
+// OAuth handler functions
+async function handleOAuthRegistration(req: http.IncomingMessage, res: http.ServerResponse) {
+  let body = '';
+  req.on('data', (chunk) => body += chunk);
+  req.on('end', () => {
+    try {
+      const clientData = JSON.parse(body);
+      const clientId = `client_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+      const clientSecret = `secret_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+      
+      oauthClients.set(clientId, {
+        client_id: clientId,
+        client_secret: clientSecret,
+        redirect_uris: clientData.redirect_uris || [`${PROTOCOL}/callback`],
+        grant_types: ['authorization_code'],
+        response_types: ['code'],
+        scope: 'gong:read'
+      });
+      
+      res.writeHead(201, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        client_id: clientId,
+        client_secret: clientSecret,
+        redirect_uris: [`${PROTOCOL}/callback`],
+        grant_types: ['authorization_code'],
+        response_types: ['code'],
+        scope: 'gong:read'
+      }));
+      console.error('OAuth client registered:', clientId);
+    } catch (error) {
+      console.error('Error registering client:', error);
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'invalid_request' }));
+    }
+  });
+}
+
+async function handleOAuthAuthorization(req: http.IncomingMessage, res: http.ServerResponse, url: URL) {
+  const params = url.searchParams;
+  const clientId = params.get('client_id');
+  const redirectUri = params.get('redirect_uri');
+  const state = params.get('state');
+  
+  if (!clientId || !oauthClients.has(clientId)) {
+    console.error('Invalid client ID:', clientId);
+    res.writeHead(400, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: 'invalid_client' }));
+    return;
+  }
+  
+  // Generate authorization code
+  const authCode = `auth_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+  oauthTokens.set(authCode, {
+    client_id: clientId,
+    redirect_uri: redirectUri,
+    scope: 'gong:read',
+    expires_at: Date.now() + 600000 // 10 minutes
+  });
+  
+  // Redirect with authorization code
+  const callback = new URL(redirectUri || `${PROTOCOL}/callback`);
+  callback.searchParams.set('code', authCode);
+  if (state) callback.searchParams.set('state', state);
+  
+  console.error('Authorization code generated, redirecting to:', callback.toString());
+  res.writeHead(302, { Location: callback.toString() });
+  res.end();
+}
+
+async function handleOAuthToken(req: http.IncomingMessage, res: http.ServerResponse) {
+  let body = '';
+  req.on('data', (chunk) => body += chunk);
+  req.on('end', () => {
+    try {
+      const params = new URLSearchParams(body);
+      const grantType = params.get('grant_type');
+      const code = params.get('code');
+      const clientId = params.get('client_id');
+      const clientSecret = params.get('client_secret');
+      
+      if (grantType !== 'authorization_code' || !code || !oauthTokens.has(code)) {
+        console.error('Invalid grant or code');
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'invalid_grant' }));
+        return;
+      }
+      
+      const tokenData = oauthTokens.get(code);
+      if (tokenData.expires_at < Date.now()) {
+        oauthTokens.delete(code);
+        console.error('Authorization code expired');
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'invalid_grant' }));
+        return;
+      }
+      
+      const client = oauthClients.get(clientId);
+      if (!client || client.client_secret !== clientSecret) {
+        console.error('Invalid client credentials');
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'invalid_client' }));
+        return;
+      }
+      
+      // Generate access token
+      const accessToken = `access_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+      oauthTokens.set(accessToken, {
+        client_id: clientId,
+        scope: tokenData.scope,
+        expires_at: Date.now() + 3600000 // 1 hour
+      });
+      
+      // Clean up authorization code
+      oauthTokens.delete(code);
+      
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        access_token: accessToken,
+        token_type: 'Bearer',
+        expires_in: 3600,
+        scope: tokenData.scope
+      }));
+      console.error('Access token issued:', accessToken);
+    } catch (error) {
+      console.error('Error processing token request:', error);
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'invalid_request' }));
+    }
+  });
 }
 
 // Start the server

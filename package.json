@@ -3,6 +3,19 @@
   "version": "1.0.0",
   "type": "module",
   "scripts": {
-    "start": "node server.js"
+    "start": "node dist/mcp-http-server.js",
+    "build": "tsc",
+    "dev": "tsx src/mcp-http-server.ts",
+    "postinstall": "npm run build"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "axios": "^1.7.2",
+    "dotenv": "^16.4.5"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "typescript": "^5.5.0",
+    "tsx": "^4.16.0"
   }
 }
