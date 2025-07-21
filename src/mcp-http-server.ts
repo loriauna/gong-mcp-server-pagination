@@ -243,14 +243,17 @@ const LIST_CALLS_TOOL: Tool = {
       },
       limit: {
         type: "integer",
-        description: "Maximum number of results to return (default: 100, max: 100)"
+        description: "Maximum number of results to return (default: 100, max: 100)",
+        minimum: 1,
+        maximum: 100
       }
-    }
+    },
+    additionalProperties: false
   }
 };
 
 const RETRIEVE_TRANSCRIPTS_TOOL: Tool = {
-  name: "retrieve_transcripts",
+  name: "retrieve_transcripts", 
   description: "Retrieve transcripts for specified call IDs with pagination support. Returns detailed transcripts including speaker IDs, topics, and timestamped sentences.",
   inputSchema: {
     type: "object",
@@ -258,7 +261,8 @@ const RETRIEVE_TRANSCRIPTS_TOOL: Tool = {
       callIds: {
         type: "array",
         items: { type: "string" },
-        description: "Array of Gong call IDs to retrieve transcripts for"
+        description: "Array of Gong call IDs to retrieve transcripts for",
+        minItems: 1
       },
       cursor: {
         type: "string",
@@ -266,10 +270,13 @@ const RETRIEVE_TRANSCRIPTS_TOOL: Tool = {
       },
       limit: {
         type: "integer",
-        description: "Maximum number of results to return (default: 100, max: 100)"
+        description: "Maximum number of results to return (default: 100, max: 100)",
+        minimum: 1,
+        maximum: 100
       }
     },
-    required: ["callIds"]
+    required: ["callIds"],
+    additionalProperties: false
   }
 };
 
@@ -282,7 +289,16 @@ function createMCPServer(): Server {
     },
     {
       capabilities: {
-        tools: {},
+        tools: {
+          listChanged: true
+        },
+        resources: {
+          subscribe: false,
+          listChanged: true
+        },
+        prompts: {
+          listChanged: true
+        }
       },
     },
   );
@@ -625,9 +641,16 @@ async function handleMCPRequest(req: http.IncomingMessage, res: http.ServerRespo
               result: {
                 protocolVersion: '2024-11-05',
                 capabilities: {
-                  tools: {},
-                  resources: {},
-                  prompts: {}
+                  tools: {
+                    listChanged: true
+                  },
+                  resources: {
+                    subscribe: false,
+                    listChanged: true
+                  },
+                  prompts: {
+                    listChanged: true
+                  }
                 },
                 serverInfo: {
                   name: 'gong-mcp-server',
