@@ -430,10 +430,29 @@ async function createHTTPMCPServer() {
       return;
     }
 
-    // MCP endpoint
-    if (path === '/mcp') {
-      console.error('MCP endpoint accessed:', req.method, req.headers);
+    // MCP endpoints (try multiple paths)
+    if (path === '/mcp' || path === '/api/mcp' || path === '/rpc' || path === '/jsonrpc') {
+      console.error(`MCP endpoint accessed at ${path}:`, req.method, req.headers);
       await handleMCPRequest(req, res);
+      return;
+    }
+
+    // Try handling MCP at root for some clients
+    if (path === '/' && req.method === 'POST') {
+      console.error('Root POST request (possible MCP):', req.headers);
+      await handleMCPRequest(req, res);
+      return;
+    }
+
+    // Test endpoint to see if Claude can reach us with auth
+    if (path === '/test' || path === '/api/test') {
+      console.error('Test endpoint accessed:', req.method, req.headers);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ 
+        message: 'Test endpoint works',
+        headers: req.headers,
+        timestamp: new Date().toISOString()
+      }));
       return;
     }
 
@@ -481,6 +500,13 @@ async function createHTTPMCPServer() {
 
 async function handleMCPRequest(req: http.IncomingMessage, res: http.ServerResponse) {
   try {
+    // Check for OAuth authorization
+    const authHeader = req.headers['authorization'] as string;
+    console.error('MCP request authorization header:', authHeader);
+    
+    // For now, accept requests with or without auth for debugging
+    // TODO: Validate OAuth token properly
+    
     // Get or create session
     const sessionId = req.headers['mcp-session-id'] as string || randomUUID();
     let session = sessions.get(sessionId);
