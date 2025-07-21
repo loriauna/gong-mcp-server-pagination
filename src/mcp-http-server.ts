@@ -35,6 +35,10 @@ const oauthTokens = new Map();
 const BASE_URL = process.env.RAILWAY_STATIC_URL || `https://gong-mcp-server-pagination-production.up.railway.app`;
 const PROTOCOL = BASE_URL.startsWith('http') ? BASE_URL : `https://${BASE_URL}`;
 
+// Debug counters
+let mcpRequestCount = 0;
+let connectionAttempts = 0;
+
 // Type definitions
 interface GongCall {
   id: string;
@@ -543,27 +547,35 @@ async function createHTTPMCPServer() {
 
 async function handleMCPRequest(req: http.IncomingMessage, res: http.ServerResponse) {
   try {
+    mcpRequestCount++;
+    console.error(`=== MCP REQUEST #${mcpRequestCount} START ===`);
+    console.error('Method:', req.method);
+    console.error('URL:', req.url);
+    console.error('Headers:', JSON.stringify(req.headers, null, 2));
+    
     // Check for OAuth authorization
     const authHeader = req.headers['authorization'] as string;
-    console.error('MCP request authorization header:', authHeader);
-    
-    // For now, accept requests with or without auth for debugging
-    // TODO: Validate OAuth token properly
+    console.error('OAuth token present:', !!authHeader);
     
     // Get or create session
     const sessionId = req.headers['mcp-session-id'] as string || randomUUID();
     let session = sessions.get(sessionId);
     
     if (!session) {
+      connectionAttempts++;
+      console.error(`Creating new MCP session #${connectionAttempts} with ID:`, sessionId);
       const server = createMCPServer();
       session = { server, lastActivity: new Date() };
       sessions.set(sessionId, session);
+    } else {
+      console.error('Using existing session:', sessionId);
     }
     
     session.lastActivity = new Date();
     res.setHeader('Mcp-Session-Id', sessionId);
 
     if (req.method === 'POST') {
+      console.error('Handling POST request - expecting JSON-RPC');
       // Handle JSON-RPC request
       let body = '';
       req.on('data', chunk => body += chunk.toString());
@@ -650,9 +662,12 @@ async function handleMCPRequest(req: http.IncomingMessage, res: http.ServerRespo
         }
       });
     } else if (req.method === 'GET') {
+      console.error('Handling GET request to MCP endpoint');
       // Handle SSE connection (optional)
       const acceptHeader = req.headers.accept || '';
+      console.error('Accept header:', acceptHeader);
       if (acceptHeader.includes('text/event-stream')) {
+        console.error('Setting up SSE connection');
         res.writeHead(200, {
           'Content-Type': 'text/event-stream',
           'Cache-Control': 'no-cache',
