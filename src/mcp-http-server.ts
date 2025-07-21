@@ -909,11 +909,12 @@ async function handleMCPRequest(req: http.IncomingMessage, res: http.ServerRespo
       req.on('data', chunk => body += chunk.toString());
       req.on('end', async () => {
         try {
+          console.error('Raw request body:', body);
           const request = JSON.parse(body);
-          console.error('MCP JSON-RPC request:', JSON.stringify(request, null, 2));
-          console.error('Request method:', request.method);
-          console.error('Request ID:', request.id);
-          console.error('Has ID field:', 'id' in request);
+          console.error('🎯 PARSED MCP REQUEST:', JSON.stringify(request, null, 2));
+          console.error('🎯 Method:', request.method);
+          console.error('🎯 ID:', request.id);
+          console.error('🎯 Params:', JSON.stringify(request.params || {}, null, 2));
           
           if (request.method === 'initialize') {
             console.error('🎉 INITIALIZE method called - MCP handshake starting!');
@@ -959,13 +960,15 @@ async function handleMCPRequest(req: http.IncomingMessage, res: http.ServerRespo
             };
           }
 
-          console.error('MCP JSON-RPC response:', JSON.stringify(response, null, 2));
+          console.error('🚀 SENDING MCP RESPONSE:', JSON.stringify(response, null, 2));
           res.writeHead(200, { 
             'Content-Type': 'application/json',
             'X-MCP-Version': '2025-06-18',
             'X-MCP-Implementation': 'gong-mcp-server'
           });
-          res.end(JSON.stringify(response));
+          const responseStr = JSON.stringify(response);
+          console.error('🚀 Response length:', responseStr.length, 'bytes');
+          res.end(responseStr);
         } catch (error) {
           res.writeHead(400, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ 
