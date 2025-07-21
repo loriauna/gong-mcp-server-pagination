@@ -175,6 +175,49 @@ const gongClient = GONG_ACCESS_KEY && GONG_ACCESS_SECRET ?
   new GongClient(GONG_ACCESS_KEY, GONG_ACCESS_SECRET) : 
   null;
 
+// Resource definitions
+const GONG_CALL_RESOURCE = {
+  uri: "gong://calls",
+  name: "Gong Calls",
+  description: "Access to Gong call data including recordings, transcripts, and metadata",
+  mimeType: "application/json"
+};
+
+// Prompt definitions  
+const ANALYZE_CALLS_PROMPT = {
+  name: "analyze_calls",
+  description: "Analyze Gong calls for insights, patterns, and action items",
+  arguments: [
+    {
+      name: "date_range",
+      description: "Date range to analyze (e.g., 'last 7 days', 'this month')",
+      required: false
+    },
+    {
+      name: "focus_area", 
+      description: "Specific area to focus analysis on (e.g., 'objections', 'next steps', 'sentiment')",
+      required: false
+    }
+  ]
+};
+
+const SUMMARIZE_TRANSCRIPT_PROMPT = {
+  name: "summarize_transcript", 
+  description: "Summarize a call transcript with key points, decisions, and action items",
+  arguments: [
+    {
+      name: "call_id",
+      description: "The Gong call ID to summarize",
+      required: true
+    },
+    {
+      name: "summary_type",
+      description: "Type of summary needed (brief, detailed, action_items, sentiment)",
+      required: false
+    }
+  ]
+};
+
 // Tool definitions
 const LIST_CALLS_TOOL: Tool = {
   name: "list_calls",
@@ -527,6 +570,7 @@ async function handleMCPRequest(req: http.IncomingMessage, res: http.ServerRespo
       req.on('end', async () => {
         try {
           const request = JSON.parse(body);
+          console.error('MCP JSON-RPC request:', JSON.stringify(request, null, 2));
           
           // Handle the request based on JSON-RPC method
           let response;
@@ -537,6 +581,22 @@ async function handleMCPRequest(req: http.IncomingMessage, res: http.ServerRespo
               id: request.id,
               result: {
                 tools: [LIST_CALLS_TOOL, RETRIEVE_TRANSCRIPTS_TOOL]
+              }
+            };
+          } else if (request.method === 'resources/list') {
+            response = {
+              jsonrpc: '2.0',
+              id: request.id,
+              result: {
+                resources: [GONG_CALL_RESOURCE]
+              }
+            };
+          } else if (request.method === 'prompts/list') {
+            response = {
+              jsonrpc: '2.0',
+              id: request.id,
+              result: {
+                prompts: [ANALYZE_CALLS_PROMPT, SUMMARIZE_TRANSCRIPT_PROMPT]
               }
             };
           } else if (request.method === 'tools/call') {
@@ -553,7 +613,9 @@ async function handleMCPRequest(req: http.IncomingMessage, res: http.ServerRespo
               result: {
                 protocolVersion: '2024-11-05',
                 capabilities: {
-                  tools: {}
+                  tools: {},
+                  resources: {},
+                  prompts: {}
                 },
                 serverInfo: {
                   name: 'gong-mcp-server',
@@ -572,6 +634,7 @@ async function handleMCPRequest(req: http.IncomingMessage, res: http.ServerRespo
             };
           }
 
+          console.error('MCP JSON-RPC response:', JSON.stringify(response, null, 2));
           res.writeHead(200, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify(response));
         } catch (error) {
