@@ -28,7 +28,7 @@ const GONG_ACCESS_KEY = process.env.GONG_ACCESS_KEY;
 const GONG_ACCESS_SECRET = process.env.GONG_ACCESS_SECRET;
 
 // Session management for MCP connections
-const activeSessions = new Map<string, { lastActivity: Date; initialized: boolean }>();
+const activeSessions = new Map<string, { lastActivity: Date; initialized: boolean; sseResponse?: http.ServerResponse }>();
 const SESSION_TIMEOUT = 30 * 60 * 1000; // 30 minutes
 
 // OAuth storage (simple in-memory for now)
@@ -961,14 +961,25 @@ async function handleMCPRequest(req: http.IncomingMessage, res: http.ServerRespo
           }
 
           console.error('🚀 SENDING MCP RESPONSE:', JSON.stringify(response, null, 2));
-          res.writeHead(200, { 
-            'Content-Type': 'application/json',
-            'X-MCP-Version': '2025-06-18',
-            'X-MCP-Implementation': 'gong-mcp-server'
-          });
-          const responseStr = JSON.stringify(response);
-          console.error('🚀 Response length:', responseStr.length, 'bytes');
-          res.end(responseStr);
+          
+          // Check if this session has an active SSE connection
+          if (session && session.sseResponse && !session.sseResponse.destroyed) {
+            console.error('📡 Sending response via SSE for session:', sessionId);
+            session.sseResponse.write(`data: ${JSON.stringify(response)}\n\n`);
+            // Send acknowledgment to the POST request
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ status: 'sent_via_sse', sessionId }));
+          } else {
+            console.error('📮 Sending response via HTTP POST response');
+            res.writeHead(200, { 
+              'Content-Type': 'application/json',
+              'X-MCP-Version': '2025-06-18',
+              'X-MCP-Implementation': 'gong-mcp-server'
+            });
+            const responseStr = JSON.stringify(response);
+            console.error('🚀 Response length:', responseStr.length, 'bytes');
+            res.end(responseStr);
+          }
         } catch (error) {
           res.writeHead(400, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ 
@@ -1196,59 +1207,80 @@ async function handleSSEConnection(req: http.IncomingMessage, res: http.ServerRe
     'Cache-Control': 'no-cache',
     'Connection': 'keep-alive',
     'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Headers': 'Cache-Control',
+    'Access-Control-Allow-Headers': 'Cache-Control, Content-Type, Authorization',
+    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS'
   });
 
   // Create session for this SSE connection
   const sessionId = randomUUID();
   connectionAttempts++;
-  console.error(`Creating SSE session #${connectionAttempts} with ID:`, sessionId);
+  console.error(`🔌 Creating SSE session #${connectionAttempts} with ID:`, sessionId);
   
-  const session = { lastActivity: new Date(), initialized: true };
+  const session = { lastActivity: new Date(), initialized: true, sseResponse: res };
   activeSessions.set(sessionId, session);
 
-  // Send initial connection event
+  // For SSE connections, we need to handle JSON-RPC over SSE
+  // Claude Code expects to send JSON-RPC messages via POST and receive responses via SSE
+  
+  console.error('🔌 SSE connection established for session:', sessionId);
+  console.error('🔌 Sending connection acknowledgment...');
+  
+  // Send connection acknowledgment
+  res.write(`data: ${JSON.stringify({
+    type: 'connection',
+    sessionId: sessionId,
+    timestamp: new Date().toISOString()
+  })}\n\n`);
+
+  // Send server capabilities via SSE
   res.write(`data: ${JSON.stringify({
     jsonrpc: '2.0',
-    method: 'notifications/initialized',
+    method: 'notifications/capabilities',
     params: {
-      protocolVersion: '2025-06-18',
       capabilities: {
         tools: { listChanged: true },
         resources: { subscribe: false, listChanged: true },
         prompts: { listChanged: true }
-      },
-      serverInfo: {
-        name: 'gong-mcp-server',
-        version: '0.1.0'
       }
     }
   })}\n\n`);
 
-  // Note: Don't proactively send tools/prompts/resources via SSE
-  // Let the client request them via JSON-RPC instead
-  console.error('SSE connection established, waiting for client requests...');
-
-  // Keep connection alive
+  // Keep connection alive with heartbeat
   const keepAlive = setInterval(() => {
-    res.write(`data: ${JSON.stringify({
-      jsonrpc: '2.0',
-      method: 'ping',
-      params: {}
-    })}\n\n`);
-  }, 30000);
+    if (!res.destroyed) {
+      res.write(`data: ${JSON.stringify({
+        type: 'heartbeat',
+        timestamp: new Date().toISOString()
+      })}\n\n`);
+      console.error('💗 SSE heartbeat sent for session:', sessionId);
+    }
+  }, 15000); // Every 15 seconds
 
   // Clean up on disconnect
-  req.on('close', () => {
-    console.error('SSE connection closed:', sessionId);
+  const cleanup = () => {
+    console.error('🔌 Cleaning up SSE session:', sessionId);
     clearInterval(keepAlive);
-    activeSessions.delete(sessionId);
+    const session = activeSessions.get(sessionId);
+    if (session) {
+      session.sseResponse = undefined; // Clear the SSE reference but keep session
+      console.error('🔌 Cleared SSE reference for session:', sessionId);
+    }
+  };
+
+  req.on('close', () => {
+    console.error('🔌 SSE connection closed:', sessionId);
+    cleanup();
   });
 
-  req.on('error', () => {
-    console.error('SSE connection error:', sessionId);
-    clearInterval(keepAlive);
-    activeSessions.delete(sessionId);
+  req.on('error', (error) => {
+    console.error('🔌 SSE connection error:', sessionId, error);
+    cleanup();
+  });
+
+  // Handle client disconnect
+  req.on('aborted', () => {
+    console.error('🔌 SSE connection aborted:', sessionId);
+    cleanup();
   });
 }
 
