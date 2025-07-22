@@ -305,24 +305,32 @@ function handleInitialize(request: any) {
 
 function handleToolsList(request: any) {
   console.error('🔧 Handling tools/list request');
+  // Don't include nextCursor if we don't have pagination
+  const result: any = {
+    tools: [LIST_CALLS_TOOL, RETRIEVE_TRANSCRIPTS_TOOL]
+  };
+  
+  // Only add nextCursor if there's actually a next page
+  // MCP spec expects it to be omitted or a string, not null
+  
   return {
     jsonrpc: '2.0',
     id: request.id,
-    result: {
-      tools: [LIST_CALLS_TOOL, RETRIEVE_TRANSCRIPTS_TOOL],
-      nextCursor: null // No pagination for now
-    }
+    result
   };
 }
 
 function handleResourcesList(request: any) {
   console.error('📚 Handling resources/list request');
+  // Don't include nextCursor unless we have pagination
+  const result: any = {
+    resources: [GONG_CALL_RESOURCE]
+  };
+  
   return {
     jsonrpc: '2.0',
     id: request.id,
-    result: {
-      resources: [GONG_CALL_RESOURCE]
-    }
+    result
   };
 }
 
@@ -347,12 +355,15 @@ function handleResourceRead(request: any) {
 
 function handlePromptsList(request: any) {
   console.error('💭 Handling prompts/list request');
+  // Don't include nextCursor unless we have pagination
+  const result: any = {
+    prompts: [ANALYZE_CALLS_PROMPT, SUMMARIZE_TRANSCRIPT_PROMPT]
+  };
+  
   return {
     jsonrpc: '2.0',
     id: request.id,
-    result: {
-      prompts: [ANALYZE_CALLS_PROMPT, SUMMARIZE_TRANSCRIPT_PROMPT]
-    }
+    result
   };
 }
 
