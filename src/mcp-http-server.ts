@@ -181,6 +181,12 @@ const gongClient = GONG_ACCESS_KEY && GONG_ACCESS_SECRET ?
   new GongClient(GONG_ACCESS_KEY, GONG_ACCESS_SECRET) : 
   null;
 
+if (!gongClient) {
+  console.error('⚠️ WARNING: Gong client not initialized - missing GONG_ACCESS_KEY or GONG_ACCESS_SECRET');
+} else {
+  console.error('✅ Gong client initialized with credentials');
+}
+
 // Resource definitions
 const GONG_CALL_RESOURCE = {
   uri: "gong://calls",
@@ -457,7 +463,19 @@ async function handleToolCall(request: any) {
         if (!isGongListCallsArgs(args)) {
           throw new Error("Invalid arguments for list_calls");
         }
-        const { fromDateTime, toDateTime, cursor, limit } = args;
+        let { fromDateTime, toDateTime, cursor, limit } = args;
+        
+        // Convert date strings to ISO format if needed
+        if (fromDateTime && !fromDateTime.includes('T')) {
+          fromDateTime = `${fromDateTime}T00:00:00Z`;
+          console.error('📅 Converted fromDateTime to ISO:', fromDateTime);
+        }
+        if (toDateTime && !toDateTime.includes('T')) {
+          toDateTime = `${toDateTime}T23:59:59Z`;
+          console.error('📅 Converted toDateTime to ISO:', toDateTime);
+        }
+        
+        console.error('🔍 Calling Gong API with params:', { fromDateTime, toDateTime, cursor, limit });
         const response = await gongClient.listCalls(fromDateTime, toDateTime, cursor, limit);
         return {
           jsonrpc: '2.0',
@@ -502,13 +520,22 @@ async function handleToolCall(request: any) {
         };
     }
   } catch (error) {
+    console.error('💥 Tool call error:', error);
     const errorMessage = error instanceof Error ? error.message : String(error);
+    const errorDetails = error instanceof Error && 'response' in error ? 
+      (error as any).response?.data : undefined;
+    
+    if (errorDetails) {
+      console.error('💥 API Error details:', JSON.stringify(errorDetails, null, 2));
+    }
+    
     return {
       jsonrpc: '2.0',
       id: request.id,
       error: {
         code: -32603,
-        message: `Error occurred while making the request: ${errorMessage}`
+        message: `Error occurred while making the request: ${errorMessage}`,
+        data: errorDetails
       }
     };
   }
@@ -964,6 +991,8 @@ async function handleMCPRequest(req: http.IncomingMessage, res: http.ServerRespo
           } else if (request.method === 'tools/list') {
             console.error('🔧 TOOLS/LIST called - this should show our tools!');
             console.error('Session initialized?', !!session);
+          } else if (request.method === 'tools/call') {
+            console.error('🛠️ TOOLS/CALL - executing tool:', request.params?.name);
           } else if (request.method === 'prompts/list') {
             console.error('💭 PROMPTS/LIST called');
           } else if (request.method === 'resources/list') {
@@ -971,7 +1000,7 @@ async function handleMCPRequest(req: http.IncomingMessage, res: http.ServerRespo
           } else if (request.method === 'notifications/initialized') {
             console.error('✅ INITIALIZED notification - handshake complete!');
           } else {
-            console.error('❓ Other method:', request.method, '- this might be why tools dont show');
+            console.error('❓ Other method:', request.method, '- unknown MCP method');
           }
           
           // Handle the request using our handlers
