@@ -824,33 +824,65 @@ async function createHTTPMCPServer() {
       return;
     }
 
-    // Default response
-    res.writeHead(200, { 
+    // Handle GET request to root - Claude Code might be checking server status
+    if (path === '/' && req.method === 'GET') {
+      const acceptHeader = req.headers.accept || '';
+      
+      // If Claude Code is requesting SSE, redirect to SSE endpoint
+      if (acceptHeader.includes('text/event-stream')) {
+        console.error('📡 Redirecting root GET with SSE accept header to /sse');
+        await handleSSEConnection(req, res);
+        return;
+      }
+      
+      // Otherwise, return server info
+      res.writeHead(200, { 
+        'Content-Type': 'application/json',
+        'X-MCP-Server': 'true'
+      });
+      res.end(JSON.stringify({ 
+        type: 'mcp-server',
+        name: 'Gong MCP Server', 
+        version: '0.1.0',
+        description: 'MCP server for Gong API with OAuth support',
+        sse_endpoint: '/sse',
+        mcp_endpoint: '/mcp',
+        protocol_version: '2025-06-18',
+        capabilities: {
+          tools: true,
+          resources: true,
+          prompts: true
+        }
+      }));
+      return;
+    }
+
+    // Handle DELETE requests (session cleanup?)
+    if (req.method === 'DELETE') {
+      console.error('🗑️ DELETE request received for path:', path);
+      const sessionId = req.headers['mcp-session-id'] as string;
+      if (sessionId && activeSessions.has(sessionId)) {
+        activeSessions.delete(sessionId);
+        console.error('🗑️ Deleted session:', sessionId);
+      }
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ status: 'ok' }));
+      return;
+    }
+
+    // Default response for other paths
+    res.writeHead(404, { 
       'Content-Type': 'application/json',
       'X-MCP-Server': 'true'
     });
     res.end(JSON.stringify({ 
-      type: 'mcp-server',
-      name: 'Gong MCP Server', 
-      version: '0.1.0',
-      description: 'MCP server for Gong API with OAuth support',
-      mcp_manifest: `${PROTOCOL}/mcp.json`,
-      endpoints: {
-        health: '/health',
+      error: 'Not found',
+      message: `Path ${path} not found`,
+      available_endpoints: {
+        sse: '/sse',
         mcp: '/mcp',
-        manifest: '/mcp.json',
-        oauth_metadata: '/.well-known/oauth-authorization-server',
-        protected_resource: '/.well-known/oauth-protected-resource',
-        register: '/register',
-        authorize: '/authorize',
-        token: '/token'
-      },
-      mcp: {
-        endpoint: '/mcp',
-        protocol_version: '2025-06-18',
-        transport: 'http',
-        capabilities: ['tools', 'resources', 'prompts'],
-        tools_available: ['list_calls', 'retrieve_transcripts']
+        health: '/health',
+        manifest: '/mcp.json'
       }
     }));
   });
@@ -1232,7 +1264,8 @@ async function handleSSEConnection(req: http.IncomingMessage, res: http.ServerRe
     timestamp: new Date().toISOString()
   })}\n\n`);
 
-  // Send server capabilities via SSE
+  // Send initial server state via SSE
+  // First, send capabilities
   res.write(`data: ${JSON.stringify({
     jsonrpc: '2.0',
     method: 'notifications/capabilities',
@@ -1242,6 +1275,36 @@ async function handleSSEConnection(req: http.IncomingMessage, res: http.ServerRe
         resources: { subscribe: false, listChanged: true },
         prompts: { listChanged: true }
       }
+    }
+  })}\n\n`);
+
+  // Then immediately send the tools list
+  console.error('📋 Sending initial tools list via SSE...');
+  res.write(`data: ${JSON.stringify({
+    jsonrpc: '2.0',
+    method: 'notifications/tools/list_changed',
+    params: {
+      tools: [LIST_CALLS_TOOL, RETRIEVE_TRANSCRIPTS_TOOL]
+    }
+  })}\n\n`);
+
+  // Send resources list
+  console.error('📚 Sending initial resources list via SSE...');
+  res.write(`data: ${JSON.stringify({
+    jsonrpc: '2.0', 
+    method: 'notifications/resources/list_changed',
+    params: {
+      resources: [GONG_CALL_RESOURCE]
+    }
+  })}\n\n`);
+
+  // Send prompts list
+  console.error('💭 Sending initial prompts list via SSE...');
+  res.write(`data: ${JSON.stringify({
+    jsonrpc: '2.0',
+    method: 'notifications/prompts/list_changed', 
+    params: {
+      prompts: [ANALYZE_CALLS_PROMPT, SUMMARIZE_TRANSCRIPT_PROMPT]
     }
   })}\n\n`);
 
