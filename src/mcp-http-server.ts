@@ -301,7 +301,7 @@ function handleInitialize(request: any) {
     jsonrpc: '2.0',
     id: request.id,
     result: {
-      protocolVersion: '2025-06-18',
+      protocolVersion: '2024-11-05',
       capabilities: {
         tools: { listChanged: true },
         resources: { subscribe: false, listChanged: true },
@@ -567,7 +567,9 @@ function createMCPHandlers() {
 
 // WebSocket MCP Handler
 function handleWebSocketConnection(ws: WebSocket, req: http.IncomingMessage) {
-  console.error('🔌 New WebSocket connection established');
+  console.error('🔌 WebSocket connection established');
+  console.error('🔌 WebSocket headers:', JSON.stringify(req.headers, null, 2));
+  console.error('🔌 WebSocket URL:', req.url);
   
   const sessionId = randomUUID();
   connectionAttempts++;
@@ -592,10 +594,12 @@ function handleWebSocketConnection(ws: WebSocket, req: http.IncomingMessage) {
   ws.on('message', async (data: Buffer) => {
     try {
       const message = data.toString();
-      console.error('🔌 WebSocket message received:', message);
+      console.error('🔌 Received WebSocket message:', message);
       
       const request = JSON.parse(message);
       console.error('🎯 PARSED WebSocket MCP REQUEST:', JSON.stringify(request, null, 2));
+      console.error('🎯 Method:', request.method);
+      console.error('🎯 ID:', request.id);
 
       session.lastActivity = new Date();
 
@@ -643,8 +647,9 @@ function handleWebSocketConnection(ws: WebSocket, req: http.IncomingMessage) {
     }
   });
 
-  ws.on('close', () => {
+  ws.on('close', (code, reason) => {
     console.error('🔌 WebSocket connection closed for session:', sessionId);
+    console.error('🔌 Close code:', code, 'reason:', reason?.toString());
     activeSessions.delete(sessionId);
   });
 
@@ -706,7 +711,7 @@ async function createHTTPMCPServer() {
       res.end(JSON.stringify({
         type: 'mcp-server',
         version: '0.1.0',
-        protocol_version: '2025-06-18',
+        protocol_version: '2024-11-05',
         name: 'Gong MCP Server',
         description: 'Access Gong call data through MCP',
         vendor: 'gong-mcp',
@@ -770,7 +775,7 @@ async function createHTTPMCPServer() {
         mcp_endpoint: `${PROTOCOL}/sse`,
         mcp_sse_endpoint: `${PROTOCOL}/sse`,
         mcp_websocket_endpoint: `${PROTOCOL.replace('http', 'ws')}/ws`,
-        mcp_protocol_version: '2025-06-18',
+        mcp_protocol_version: '2024-11-05',
         mcp_capabilities: ['tools', 'resources', 'prompts'],
         mcp_transport: ['sse', 'websocket'],
         // Alternative MCP discovery methods
@@ -791,7 +796,7 @@ async function createHTTPMCPServer() {
         mcp_endpoint: `${PROTOCOL}/sse`,
         mcp_sse_endpoint: `${PROTOCOL}/sse`,
         mcp_websocket_endpoint: `${PROTOCOL.replace('http', 'ws')}/ws`,
-        mcp_protocol_version: '2025-06-18',
+        mcp_protocol_version: '2024-11-05',
         mcp_capabilities: ['tools', 'resources', 'prompts'],
         mcp_transport: ['sse', 'websocket'],
         // Alternative MCP discovery methods
@@ -906,7 +911,7 @@ async function createHTTPMCPServer() {
             id: 1,
             method: 'initialize',
             params: {
-              protocolVersion: '2025-06-18',
+              protocolVersion: '2024-11-05',
               capabilities: { roots: { listChanged: true }, sampling: {} },
               clientInfo: { name: 'debug-client', version: '1.0' }
             }
@@ -996,7 +1001,7 @@ async function createHTTPMCPServer() {
         sse_endpoint: '/sse',
         mcp_endpoint: '/mcp',
         websocket_endpoint: '/ws',
-        protocol_version: '2025-06-18',
+        protocol_version: '2024-11-05',
         capabilities: {
           tools: true,
           resources: true,
@@ -1053,7 +1058,13 @@ async function createHTTPMCPServer() {
     path: '/ws'
   });
 
+  console.error('🔌 WebSocket server created on path: /ws');
+  
   wss.on('connection', handleWebSocketConnection);
+  
+  wss.on('error', (error) => {
+    console.error('🔌 WebSocket server error:', error);
+  });
 
   httpServer.listen(parseInt(PORT), '0.0.0.0', () => {
     console.error(`MCP server running on port ${PORT}`);

@@ -26,7 +26,8 @@
       "Bash(rm:*)",
       "WebFetch(domain:docs.anthropic.com)",
       "WebFetch(domain:mcp-framework.com)",
-      "WebFetch(domain:simplescraper.io)"
+      "WebFetch(domain:simplescraper.io)",
+      "WebFetch(domain:gong-mcp-server-pagination-production.up.railway.app)"
     ],
     "deny": []
   }
