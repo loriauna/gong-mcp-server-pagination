@@ -1178,7 +1178,7 @@ async function handleMCPRequest(req: http.IncomingMessage, res: http.ServerRespo
             console.error('📮 Sending response via HTTP POST response');
             res.writeHead(200, { 
               'Content-Type': 'application/json',
-              'X-MCP-Version': '2025-06-18',
+              'X-MCP-Version': '2024-11-05',
               'X-MCP-Implementation': 'gong-mcp-server'
             });
             const responseStr = JSON.stringify(response);
