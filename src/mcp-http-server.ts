@@ -301,7 +301,7 @@ function handleInitialize(request: any) {
     jsonrpc: '2.0',
     id: request.id,
     result: {
-      protocolVersion: '2025-06-18',
+      protocolVersion: '2024-11-05',
       capabilities: {
         tools: { listChanged: true },
         resources: { subscribe: false, listChanged: true },
@@ -711,7 +711,7 @@ async function createHTTPMCPServer() {
       res.end(JSON.stringify({
         type: 'mcp-server',
         version: '0.1.0',
-        protocol_version: '2025-06-18',
+        protocol_version: '2024-11-05',
         name: 'Gong MCP Server',
         description: 'Access Gong call data through MCP',
         vendor: 'gong-mcp',
@@ -775,7 +775,7 @@ async function createHTTPMCPServer() {
         mcp_endpoint: `${PROTOCOL}/sse`,
         mcp_sse_endpoint: `${PROTOCOL}/sse`,
         mcp_websocket_endpoint: `${PROTOCOL.replace('http', 'ws')}/ws`,
-        mcp_protocol_version: '2025-06-18',
+        mcp_protocol_version: '2024-11-05',
         mcp_capabilities: ['tools', 'resources', 'prompts'],
         mcp_transport: ['sse', 'websocket'],
         // Alternative MCP discovery methods
@@ -796,7 +796,7 @@ async function createHTTPMCPServer() {
         mcp_endpoint: `${PROTOCOL}/sse`,
         mcp_sse_endpoint: `${PROTOCOL}/sse`,
         mcp_websocket_endpoint: `${PROTOCOL.replace('http', 'ws')}/ws`,
-        mcp_protocol_version: '2025-06-18',
+        mcp_protocol_version: '2024-11-05',
         mcp_capabilities: ['tools', 'resources', 'prompts'],
         mcp_transport: ['sse', 'websocket'],
         // Alternative MCP discovery methods
@@ -911,7 +911,7 @@ async function createHTTPMCPServer() {
             id: 1,
             method: 'initialize',
             params: {
-              protocolVersion: '2025-06-18',
+              protocolVersion: '2024-11-05',
               capabilities: { roots: { listChanged: true }, sampling: {} },
               clientInfo: { name: 'debug-client', version: '1.0' }
             }
@@ -1001,7 +1001,7 @@ async function createHTTPMCPServer() {
         sse_endpoint: '/sse',
         mcp_endpoint: '/mcp',
         websocket_endpoint: '/ws',
-        protocol_version: '2025-06-18',
+        protocol_version: '2024-11-05',
         capabilities: {
           tools: true,
           resources: true,
@@ -1011,16 +1011,25 @@ async function createHTTPMCPServer() {
       return;
     }
 
-    // Handle DELETE requests (session cleanup?)
+    // Handle DELETE requests (session cleanup - Claude terminates connection this way)
     if (req.method === 'DELETE') {
       console.error('🗑️ DELETE request received for path:', path);
+      console.error('🗑️ DELETE headers:', JSON.stringify(req.headers, null, 2));
       const sessionId = req.headers['mcp-session-id'] as string;
       if (sessionId && activeSessions.has(sessionId)) {
+        const session = activeSessions.get(sessionId);
+        if (session?.sseResponse && !session.sseResponse.destroyed) {
+          console.error('🗑️ Closing SSE connection for session:', sessionId);
+          session.sseResponse.end();
+        }
         activeSessions.delete(sessionId);
         console.error('🗑️ Deleted session:', sessionId);
       }
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ status: 'ok' }));
+      res.writeHead(200, { 
+        'Content-Type': 'application/json',
+        'X-MCP-Version': '2024-11-05'
+      });
+      res.end(JSON.stringify({ status: 'session_terminated' }));
       return;
     }
 
@@ -1171,14 +1180,17 @@ async function handleMCPRequest(req: http.IncomingMessage, res: http.ServerRespo
           if (session && session.sseResponse && !session.sseResponse.destroyed) {
             console.error('📡 Sending response via SSE for session:', sessionId);
             session.sseResponse.write(`data: ${JSON.stringify(response)}\n\n`);
-            // Send acknowledgment to the POST request
-            res.writeHead(200, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ status: 'sent_via_sse', sessionId }));
+            // Send 202 acknowledgment to the POST request (as per Reddit post)
+            res.writeHead(202, { 
+              'Content-Type': 'application/json',
+              'X-MCP-Version': '2024-11-05' 
+            });
+            res.end(JSON.stringify({ status: 'accepted', sessionId }));
           } else {
             console.error('📮 Sending response via HTTP POST response');
             res.writeHead(200, { 
               'Content-Type': 'application/json',
-              'X-MCP-Version': '2025-06-18',
+              'X-MCP-Version': '2024-11-05',
               'X-MCP-Implementation': 'gong-mcp-server'
             });
             const responseStr = JSON.stringify(response);
