@@ -14,6 +14,7 @@ import dotenv from 'dotenv';
 import crypto from 'crypto';
 import http from 'http';
 import { randomUUID } from 'crypto';
+import { WebSocketServer, WebSocket } from 'ws';
 
 // Redirect all console output to stderr
 const originalConsole = { ...console };
@@ -28,7 +29,12 @@ const GONG_ACCESS_KEY = process.env.GONG_ACCESS_KEY;
 const GONG_ACCESS_SECRET = process.env.GONG_ACCESS_SECRET;
 
 // Session management for MCP connections
-const activeSessions = new Map<string, { lastActivity: Date; initialized: boolean; sseResponse?: http.ServerResponse }>();
+const activeSessions = new Map<string, { 
+  lastActivity: Date; 
+  initialized: boolean; 
+  sseResponse?: http.ServerResponse;
+  wsConnection?: WebSocket;
+}>();
 const SESSION_TIMEOUT = 30 * 60 * 1000; // 30 minutes
 
 // OAuth storage (simple in-memory for now)
@@ -559,6 +565,107 @@ function createMCPHandlers() {
   return handlers;
 }
 
+// WebSocket MCP Handler
+function handleWebSocketConnection(ws: WebSocket, req: http.IncomingMessage) {
+  console.error('🔌 New WebSocket connection established');
+  
+  const sessionId = randomUUID();
+  connectionAttempts++;
+  console.error(`🔌 Creating WebSocket session #${connectionAttempts} with ID:`, sessionId);
+  
+  const session = { 
+    lastActivity: new Date(), 
+    initialized: false, 
+    wsConnection: ws 
+  };
+  activeSessions.set(sessionId, session);
+
+  const mcpHandlers = createMCPHandlers();
+
+  // Send welcome message
+  ws.send(JSON.stringify({
+    type: 'connection',
+    sessionId: sessionId,
+    timestamp: new Date().toISOString()
+  }));
+
+  ws.on('message', async (data: Buffer) => {
+    try {
+      const message = data.toString();
+      console.error('🔌 WebSocket message received:', message);
+      
+      const request = JSON.parse(message);
+      console.error('🎯 PARSED WebSocket MCP REQUEST:', JSON.stringify(request, null, 2));
+
+      session.lastActivity = new Date();
+
+      // Handle MCP protocol messages
+      const handler = mcpHandlers[request.method as keyof typeof mcpHandlers];
+      let response;
+
+      if (handler) {
+        if (request.method === 'initialize') {
+          session.initialized = true;
+        }
+        response = await handler(request);
+
+        // Skip response for notifications
+        if (response === null) {
+          console.error('No response needed for WebSocket notification:', request.method);
+          return;
+        }
+      } else {
+        console.error('❌ Unknown WebSocket method:', request.method);
+        response = {
+          jsonrpc: '2.0',
+          id: request.id,
+          error: {
+            code: -32601,
+            message: 'Method not found'
+          }
+        };
+      }
+
+      console.error('🚀 SENDING WebSocket MCP RESPONSE:', JSON.stringify(response, null, 2));
+      ws.send(JSON.stringify(response));
+
+    } catch (error) {
+      console.error('💥 WebSocket message error:', error);
+      const errorResponse = {
+        jsonrpc: '2.0',
+        id: null,
+        error: {
+          code: -32700,
+          message: 'Parse error'
+        }
+      };
+      ws.send(JSON.stringify(errorResponse));
+    }
+  });
+
+  ws.on('close', () => {
+    console.error('🔌 WebSocket connection closed for session:', sessionId);
+    activeSessions.delete(sessionId);
+  });
+
+  ws.on('error', (error) => {
+    console.error('🔌 WebSocket error for session:', sessionId, error);
+    activeSessions.delete(sessionId);
+  });
+
+  // Send heartbeat every 30 seconds
+  const heartbeat = setInterval(() => {
+    if (ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({
+        type: 'heartbeat',
+        timestamp: new Date().toISOString()
+      }));
+    } else {
+      clearInterval(heartbeat);
+    }
+  }, 30000);
+}
+
 // HTTP MCP Transport Implementation
 async function createHTTPMCPServer() {
   const PORT = process.env.PORT;
@@ -612,6 +719,7 @@ async function createHTTPMCPServer() {
         endpoints: {
           sse: '/sse',
           mcp: '/mcp',
+          websocket: '/ws',
           messages: '/messages',
           oauth: {
             authorize: '/authorize',
@@ -661,9 +769,10 @@ async function createHTTPMCPServer() {
         // MCP-specific extensions
         mcp_endpoint: `${PROTOCOL}/sse`,
         mcp_sse_endpoint: `${PROTOCOL}/sse`,
+        mcp_websocket_endpoint: `${PROTOCOL.replace('http', 'ws')}/ws`,
         mcp_protocol_version: '2025-06-18',
         mcp_capabilities: ['tools', 'resources', 'prompts'],
-        mcp_transport: 'sse',
+        mcp_transport: ['sse', 'websocket'],
         // Alternative MCP discovery methods
         mcp_server_url: `${PROTOCOL}/sse`,
         modelcontextprotocol_endpoint: `${PROTOCOL}/sse`
@@ -681,9 +790,10 @@ async function createHTTPMCPServer() {
         // MCP-specific extensions  
         mcp_endpoint: `${PROTOCOL}/sse`,
         mcp_sse_endpoint: `${PROTOCOL}/sse`,
+        mcp_websocket_endpoint: `${PROTOCOL.replace('http', 'ws')}/ws`,
         mcp_protocol_version: '2025-06-18',
         mcp_capabilities: ['tools', 'resources', 'prompts'],
-        mcp_transport: 'sse',
+        mcp_transport: ['sse', 'websocket'],
         // Alternative MCP discovery methods
         mcp_server_url: `${PROTOCOL}/sse`,
         modelcontextprotocol_endpoint: `${PROTOCOL}/sse`
@@ -885,6 +995,7 @@ async function createHTTPMCPServer() {
         description: 'MCP server for Gong API with OAuth support',
         sse_endpoint: '/sse',
         mcp_endpoint: '/mcp',
+        websocket_endpoint: '/ws',
         protocol_version: '2025-06-18',
         capabilities: {
           tools: true,
@@ -919,6 +1030,7 @@ async function createHTTPMCPServer() {
       available_endpoints: {
         sse: '/sse',
         mcp: '/mcp',
+        websocket: '/ws',
         health: '/health',
         manifest: '/mcp.json'
       }
@@ -935,10 +1047,20 @@ async function createHTTPMCPServer() {
     }
   }, 5 * 60 * 1000); // Every 5 minutes
 
+  // Create WebSocket server
+  const wss = new WebSocketServer({ 
+    server: httpServer,
+    path: '/ws'
+  });
+
+  wss.on('connection', handleWebSocketConnection);
+
   httpServer.listen(parseInt(PORT), '0.0.0.0', () => {
     console.error(`MCP server running on port ${PORT}`);
     console.error(`Health check: http://0.0.0.0:${PORT}/health`);
     console.error(`MCP endpoint: http://0.0.0.0:${PORT}/mcp`);
+    console.error(`WebSocket endpoint: ws://0.0.0.0:${PORT}/ws`);
+    console.error(`SSE endpoint: http://0.0.0.0:${PORT}/sse`);
   });
 }
 
