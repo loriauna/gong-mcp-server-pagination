@@ -301,7 +301,7 @@ function handleInitialize(request: any) {
     jsonrpc: '2.0',
     id: request.id,
     result: {
-      protocolVersion: '2024-11-05',
+      protocolVersion: '2025-06-18',
       capabilities: {
         tools: { listChanged: true },
         resources: { subscribe: false, listChanged: true },
@@ -711,7 +711,7 @@ async function createHTTPMCPServer() {
       res.end(JSON.stringify({
         type: 'mcp-server',
         version: '0.1.0',
-        protocol_version: '2024-11-05',
+        protocol_version: '2025-06-18',
         name: 'Gong MCP Server',
         description: 'Access Gong call data through MCP',
         vendor: 'gong-mcp',
@@ -775,7 +775,7 @@ async function createHTTPMCPServer() {
         mcp_endpoint: `${PROTOCOL}/sse`,
         mcp_sse_endpoint: `${PROTOCOL}/sse`,
         mcp_websocket_endpoint: `${PROTOCOL.replace('http', 'ws')}/ws`,
-        mcp_protocol_version: '2024-11-05',
+        mcp_protocol_version: '2025-06-18',
         mcp_capabilities: ['tools', 'resources', 'prompts'],
         mcp_transport: ['sse', 'websocket'],
         // Alternative MCP discovery methods
@@ -796,7 +796,7 @@ async function createHTTPMCPServer() {
         mcp_endpoint: `${PROTOCOL}/sse`,
         mcp_sse_endpoint: `${PROTOCOL}/sse`,
         mcp_websocket_endpoint: `${PROTOCOL.replace('http', 'ws')}/ws`,
-        mcp_protocol_version: '2024-11-05',
+        mcp_protocol_version: '2025-06-18',
         mcp_capabilities: ['tools', 'resources', 'prompts'],
         mcp_transport: ['sse', 'websocket'],
         // Alternative MCP discovery methods
@@ -911,7 +911,7 @@ async function createHTTPMCPServer() {
             id: 1,
             method: 'initialize',
             params: {
-              protocolVersion: '2024-11-05',
+              protocolVersion: '2025-06-18',
               capabilities: { roots: { listChanged: true }, sampling: {} },
               clientInfo: { name: 'debug-client', version: '1.0' }
             }
@@ -1001,7 +1001,7 @@ async function createHTTPMCPServer() {
         sse_endpoint: '/sse',
         mcp_endpoint: '/mcp',
         websocket_endpoint: '/ws',
-        protocol_version: '2024-11-05',
+        protocol_version: '2025-06-18',
         capabilities: {
           tools: true,
           resources: true,
@@ -1178,7 +1178,7 @@ async function handleMCPRequest(req: http.IncomingMessage, res: http.ServerRespo
             console.error('📮 Sending response via HTTP POST response');
             res.writeHead(200, { 
               'Content-Type': 'application/json',
-              'X-MCP-Version': '2024-11-05',
+              'X-MCP-Version': '2025-06-18',
               'X-MCP-Implementation': 'gong-mcp-server'
             });
             const responseStr = JSON.stringify(response);
