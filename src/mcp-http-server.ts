@@ -817,8 +817,8 @@ async function createHTTPMCPServer() {
     }
 
     // SSE endpoint for MCP (this is what remote MCP servers typically use)
-    if (path === '/sse' && req.method === 'GET') {
-      console.error('SSE endpoint accessed for MCP streaming:', req.headers);
+    if (path === '/sse' && (req.method === 'GET' || req.method === 'POST')) {
+      console.error('SSE endpoint accessed for MCP streaming:', req.method, req.headers);
       await handleSSEConnection(req, res);
       return;
     }
@@ -1390,10 +1390,27 @@ async function handleOAuthToken(req: http.IncomingMessage, res: http.ServerRespo
 // SSE Connection Handler for Remote MCP
 async function handleSSEConnection(req: http.IncomingMessage, res: http.ServerResponse) {
   console.error('=== SSE CONNECTION START ===');
+  console.error('SSE Method:', req.method);
   
-  // Check for OAuth authorization
-  const authHeader = req.headers['authorization'] as string;
-  console.error('SSE OAuth token present:', !!authHeader);
+  // For POST requests, consume the body first
+  if (req.method === 'POST') {
+    let body = '';
+    req.on('data', chunk => body += chunk.toString());
+    req.on('end', () => {
+      console.error('SSE POST body:', body);
+      // Continue with SSE setup after consuming body
+      setupSSEConnection();
+    });
+    return;
+  } else {
+    // For GET requests, setup SSE immediately
+    setupSSEConnection();
+  }
+
+  function setupSSEConnection() {
+    // Check for OAuth authorization
+    const authHeader = req.headers['authorization'] as string;
+    console.error('SSE OAuth token present:', !!authHeader);
   
   // Set up SSE headers
   res.writeHead(200, {
@@ -1507,6 +1524,7 @@ async function handleSSEConnection(req: http.IncomingMessage, res: http.ServerRe
     console.error('🔌 SSE connection aborted:', sessionId);
     cleanup();
   });
+  } // Close setupSSEConnection function
 }
 
 // Start the server
